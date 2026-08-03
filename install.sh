@@ -908,6 +908,8 @@ cat <<EOF > "$TARGET_DIR/home/waybar.nix"
         [ \"\$name\" = \"amdgpu\" ] && { t=\$(cat \"\$h/temp1_input\"); echo \" \$((t/1000))°C\"; }
       done
     '';
+  };
+
   # Статус кулеров (nbfc). Пусто, если сервис не настроен/не запущен
   home.file.".local/bin/fan" = {
     executable = true;
