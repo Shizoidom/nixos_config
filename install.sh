@@ -8,11 +8,11 @@ TARGET_DIR="/home/$REAL_USER/.config/nixos"
 
 echo "🚀 Запуск полной автонастройки NixOS для $REAL_USER..."
 
-# Создаем директорию конфига
+# Создаем директории для конфигурации
 mkdir -p "$TARGET_DIR/system"
 mkdir -p "$TARGET_DIR/home"
 
-# 1. Забираем реальный hardware-configuration
+# 1. Забираем системный hardware-configuration
 if [ -f /etc/nixos/hardware-configuration.nix ]; then
     cp /etc/nixos/hardware-configuration.nix "$TARGET_DIR/system/hardware-configuration.nix"
     echo "✅ Скопирован /etc/nixos/hardware-configuration.nix"
@@ -24,7 +24,7 @@ fi
 # 2. Создаем flake.nix
 cat <<EOF > "$TARGET_DIR/flake.nix"
 {
-  description = "Adult Reproducible Hyprland Setup for Mechrevo Jiaolong 16 Pro";
+  description = "Reproducible Hyprland Setup for Mechrevo Jiaolong 16 Pro";
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
@@ -54,7 +54,7 @@ cat <<EOF > "$TARGET_DIR/flake.nix"
 }
 EOF
 
-# 3. Создаем system/nvidia.nix (RTX 5070M + Ryzen 9 7945HX)
+# 3. Создаем system/nvidia.nix (Графика RTX 5070M + AMD iGPU)
 cat <<EOF > "$TARGET_DIR/system/nvidia.nix"
 { config, pkgs, ... }:
 
@@ -94,7 +94,7 @@ cat <<EOF > "$TARGET_DIR/system/nvidia.nix"
 }
 EOF
 
-# 4. Создаем system/configuration.nix
+# 4. Создаем system/configuration.nix (Системные настройки + Разрешение Unfree + Ускорение сети)
 cat <<EOF > "$TARGET_DIR/system/configuration.nix"
 { pkgs, ... }:
 
@@ -102,7 +102,19 @@ cat <<EOF > "$TARGET_DIR/system/configuration.nix"
   boot.loader.systemd-boot.enable = true;
   boot.loader.efi.canTouchEfiVariables = true;
 
-  nix.settings.experimental-features = [ "nix-command" "flakes" ];
+  # Разрешаем проприетарные драйверы Nvidia и закрытый софт
+  nixpkgs.config.allowUnfree = true;
+
+  # Настройки Nix и максимальное ускорение загрузки
+  nix.settings = {
+    experimental-features = [ "nix-command" "flakes" ];
+    max-jobs = "auto";
+    max-substitution-jobs = 32;
+    http-connections = 50;
+    warn-dirty = false;
+  };
+
+  programs.nix-ld.enable = true;
 
   networking.hostName = "mechrevo";
   networking.networkmanager.enable = true;
@@ -125,6 +137,12 @@ cat <<EOF > "$TARGET_DIR/system/configuration.nix"
     pulse.enable = true;
   };
 
+  environment.systemPackages = with pkgs; [
+    git
+    curl
+    wget
+  ];
+
   users.users.$REAL_USER = {
     isNormalUser = true;
     extraGroups = [ "wheel" "networkmanager" "video" "audio" ];
@@ -136,7 +154,7 @@ cat <<EOF > "$TARGET_DIR/system/configuration.nix"
 }
 EOF
 
-# 5. Создаем home/hyprland.nix (Два монитора + Стиль)
+# 5. Создаем home/hyprland.nix
 cat <<EOF > "$TARGET_DIR/home/hyprland.nix"
 { pkgs, ... }:
 
@@ -144,7 +162,6 @@ cat <<EOF > "$TARGET_DIR/home/hyprland.nix"
   wayland.windowManager.hyprland = {
     enable = true;
     extraConfig = ''
-      # --- ДВА МОНИТОРА ---
       monitor = eDP-1, 2560x1600@240, 0x0, 1.25
       monitor = , preferred, auto-right, 1
 
@@ -160,7 +177,6 @@ cat <<EOF > "$TARGET_DIR/home/hyprland.nix"
       exec-once = waybar
       exec-once = swaync
 
-      # --- ВЗРОСЛЫЙ СТИЛЬ ---
       general {
           gaps_in = 4
           gaps_out = 8
@@ -212,7 +228,7 @@ cat <<EOF > "$TARGET_DIR/home/hyprland.nix"
 }
 EOF
 
-# 6. Создаем home/home.nix
+# 6. Создаем home/home.nix (Пользовательские пакеты)
 cat <<EOF > "$TARGET_DIR/home/home.nix"
 { pkgs, ... }:
 
@@ -226,12 +242,13 @@ cat <<EOF > "$TARGET_DIR/home/home.nix"
     kitty
     fuzzel
     waybar
-    swaync
+    swaynotificationcenter
     fastfetch
     git
     vscode
     firefox
     ryzenadj
+    appimage-run
   ];
 
   programs.home-manager.enable = true;
@@ -239,17 +256,17 @@ cat <<EOF > "$TARGET_DIR/home/home.nix"
 }
 EOF
 
-# Выставляем права владельца
+# Права на каталог
 chown -R $REAL_USER:users "$TARGET_DIR"
 
-# Инициализируем Git для Nix Flakes
 cd "$TARGET_DIR"
-git init
-git config user.name "$REAL_USER" || true
-git config user.email "$REAL_USER@local" || true
-git add .
 
-echo "⚙️ Запуск билда и установки NixOS..."
-sudo nixos-rebuild switch --flake .#mechrevo --extra-experimental-features 'nix-command flakes'
+# 7. Инициализация Git (требуется для Nix Flakes)
+echo "📦 Инициализация локального Git-репозитория..."
+nix-shell -p git --run "git init && git config user.name '$REAL_USER' && git config user.email '$REAL_USER@local' && git add ."
 
-echo "🔥 ВСЁ ГОТОВО! Перезагрузись и заходи в Hyprland."
+# 8. Сборка и установка системы
+echo "⚙️ Запуск сборки и разворачивания NixOS..."
+sudo nix-shell -p git --run "NIX_CONFIG='experimental-features = nix-command flakes' nixos-rebuild switch --flake .#mechrevo"
+
+echo "🔥 ВСЁ ГОТОВО! Перезагрузись (sudo reboot) и входи в Hyprland."
