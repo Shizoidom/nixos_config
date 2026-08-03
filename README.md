@@ -18,7 +18,7 @@ curl -sSL https://raw.githubusercontent.com/Shizoidom/nixos_config/main/install.
 | 1-2 | Создаёт структуру, копирует/генерирует `hardware-configuration.nix` |
 | 3 | Генерирует flake (nixpkgs-unstable + home-manager) |
 | 4 | Настройка NVIDIA RTX 5070M (open-модули ядра — обязательны для Blackwell, latest драйвер, без PRIME — у 7845HX нет встроенной графики) |
-| 5 | Создаёт swapfile размером с RAM и вычисляет параметры resume для гибернации |
+| 5 | Гибернация: использует твой swap-раздел, если он есть (приоритет), иначе создаёт swapfile размером с RAM |
 | 6 | Системный конфиг: GRUB (dual boot с Windows через os-prober), гибернация при закрытии крышки, SDDM, PipeWire, Zsh, шрифты |
 | 7-12 | Kitty, Fuzzel, SwayNC, Hyprland, Waybar, Home Manager |
 | 13-14 | Права, git-init, `nixos-rebuild switch` |
@@ -34,8 +34,8 @@ curl -sSL https://raw.githubusercontent.com/Shizoidom/nixos_config/main/install.
 
 - **Hyprland** + Waybar + Fuzzel + Kitty + SwayNC (Catppuccin Mocha)
 - **Дуал-бут**: GRUB с os-prober — Windows и NixOS в одном меню
-- **Гибернация по закрытию крышки** (и от батареи, и от сети): RAM выгружается в swapfile
-  на `/var/lib/swapfile`, при открытии крышки всё восстанавливается
+- **Гибернация по закрытию крышки** (и от батареи, и от сети): RAM уходит в swap
+  (используется твой swap-раздел, если он есть — на любой ФС; иначе создаётся swapfile на `/var/lib/swapfile`)
 - **NVIDIA RTX 5070M**: open-модули ядра (Blackwell), latest драйвер, fine-grained power management
 - **Локаль ru_RU.UTF-8**, часовой пояс Europe/Moscow
 - Внутренний экран: воркспейсы 1-4, внешний монитор: 5-7

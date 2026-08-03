@@ -120,40 +120,75 @@ cat <<EOF > "$TARGET_DIR/system/nvidia.nix"
 EOF
 
 # ==============================================================================
-# 5. Hibernation: swapfile размером с RAM + параметры resume
+# 5. Hibernation: swap (готовый раздел или swapfile) + параметры resume
 # ==============================================================================
-echo "💾 [5/15] Создание swapfile для гибернации (размер = RAM)..."
+echo "💾 [5/15] Настройка гибернации (ищем swap)..."
 
-MEM_KB=$(awk '/^MemTotal:/{print $2}' /proc/meminfo)
-SWAP_MB=$((MEM_KB / 1024))
-[ -f /var/lib/swapfile ] && rm -f /var/lib/swapfile
-
-if ! fallocate -l "${SWAP_MB}M" /var/lib/swapfile 2>/dev/null; then
-    dd if=/dev/zero of=/var/lib/swapfile bs=1M count="$SWAP_MB" status=progress
+# Убираем swapfile от прошлого запуска (активный swap нельзя удалить - сначала swapoff)
+if [ -f /var/lib/swapfile ]; then
+    swapoff /var/lib/swapfile 2>/dev/null || true
+    rm -f /var/lib/swapfile 2>/dev/null || echo "⚠️ Не удалось удалить старый /var/lib/swapfile"
 fi
-chmod 600 /var/lib/swapfile
-mkswap /var/lib/swapfile >/dev/null
-swapon /var/lib/swapfile 2>/dev/null || true
-echo "✅ Swapfile: /var/lib/swapfile (${SWAP_MB} MB)"
 
-# Физическое смещение swapfile - нужно для resume после гибернации
-if command -v filefrag >/dev/null 2>&1; then
-    OFFSET_BLOCK=$(filefrag -v /var/lib/swapfile | awk '/^[[:space:]]*0:/{split($3,p,".."); gsub(":","",p[1]); print p[1]; exit}')
+# Ищем существующий swap-раздел (например, созданный при установке NixOS)
+SWAP_UUID=""
+SWAP_NAME=""
+while read -r NAME TYPE FSTYPE UUID; do
+    [ -z "$NAME" ] && continue
+    case "$NAME" in
+        loop*|ram*|zram*|sr*|md*|dm-*) continue ;;
+    esac
+    if [ "$TYPE" = "part" ] && [ "$FSTYPE" = "swap" ]; then
+        SWAP_NAME="$NAME"
+        SWAP_UUID="$UUID"
+    fi
+done < <(lsblk -n -l -o NAME,TYPE,FSTYPE,UUID 2>/dev/null || true)
+
+if [ -n "$SWAP_UUID" ]; then
+    # Гибернация через swap-раздел: resume_offset не нужен, работает на любой ФС
+    RESUME_DEV="UUID=${SWAP_UUID}"
+    RESUME_OFFSET_LINE=""
+    echo "✅ Найден swap-раздел /dev/${SWAP_NAME} (UUID=${SWAP_UUID}) - используем его"
+    if grep -qi "swap" "$TARGET_DIR/system/hardware-configuration.nix"; then
+        SWAP_DEVICES_LINE="" # раздел уже описан в hardware-configuration.nix
+    else
+        SWAP_DEVICES_LINE="swapDevices = [ { device = \"/dev/disk/by-uuid/${SWAP_UUID}\"; } ];"
+    fi
 else
-    echo "🔧 filefrag не найден - устанавливаем e2fsprogs..."
-    OFFSET_BLOCK=$(nix-shell -p e2fsprogs --run "filefrag -v /var/lib/swapfile | awk '/^[[:space:]]*0:/{split(\$3,p,\"..\"); gsub(\":\",\"\",p[1]); print p[1]; exit}'")
+    # Swap-раздела нет - создаем swapfile размером с RAM
+    echo "⚠️ Swap-раздел не найден - создаем swapfile размером с RAM..."
+    MEM_KB=$(awk '/^MemTotal:/{print $2}' /proc/meminfo)
+    SWAP_MB=$((MEM_KB / 1024))
+    if ! fallocate -l "${SWAP_MB}M" /var/lib/swapfile 2>/dev/null; then
+        dd if=/dev/zero of=/var/lib/swapfile bs=1M count="$SWAP_MB" status=progress
+    fi
+    chmod 600 /var/lib/swapfile
+    mkswap /var/lib/swapfile >/dev/null
+    swapon /var/lib/swapfile 2>/dev/null || true
+    echo "✅ Swapfile: /var/lib/swapfile (${SWAP_MB} MB)"
+
+    # Физическое смещение swapfile - нужно для resume после гибернации
+    if command -v filefrag >/dev/null 2>&1; then
+        OFFSET_BLOCK=$(filefrag -v /var/lib/swapfile | awk '/^[[:space:]]*0:/{split($3,p,".."); gsub(":","",p[1]); print p[1]; exit}')
+    else
+        echo "🔧 filefrag не найден - устанавливаем e2fsprogs..."
+        OFFSET_BLOCK=$(nix-shell -p e2fsprogs --run "filefrag -v /var/lib/swapfile | awk '/^[[:space:]]*0:/{split(\$3,p,\"..\"); gsub(\":\",\"\",p[1]); print p[1]; exit}'")
+    fi
+    if [ -z "$OFFSET_BLOCK" ]; then
+        echo "❌ Ошибка: не удалось определить смещение swapfile (для гибернации нужен ext4 root без снапшотов)!"
+        exit 1
+    fi
+    RESUME_OFFSET=$((OFFSET_BLOCK * 4096))
+    RESUME_DEV="UUID=$(findmnt -no UUID /)"
+    RESUME_OFFSET_LINE="boot.kernelParams = [ \"resume_offset=${RESUME_OFFSET}\" ];"
+    SWAP_DEVICES_LINE="swapDevices = [ { device = \"/var/lib/swapfile\"; } ];"
+    echo "✅ resume_offset=${RESUME_OFFSET}"
 fi
-if [ -z "$OFFSET_BLOCK" ]; then
-    echo "❌ Ошибка: не удалось определить смещение swapfile (для гибернации нужен ext4 root)!"
-    exit 1
-fi
-RESUME_OFFSET=$((OFFSET_BLOCK * 4096))
-ROOT_UUID=$(findmnt -no UUID /)
 
 if [ "$(findmnt -no FSTYPE /)" = "btrfs" ]; then
-    echo "⚠️ Внимание: корневой раздел btrfs - гибернация со swapfile может не работать!"
+    echo "⚠️ Внимание: корневой раздел btrfs"
 fi
-echo "✅ resume_offset=${RESUME_OFFSET} | root UUID=${ROOT_UUID}"
+echo "✅ Resume device: ${RESUME_DEV}"
 
 # ==============================================================================
 # 6. Системный конфигуратор (SDDM, Pipewire, Zsh, Fonts, Nix Optimizations,
@@ -174,13 +209,10 @@ cat <<EOF > "$TARGET_DIR/system/configuration.nix"
   };
   boot.loader.efi.canTouchEfiVariables = true;
 
-  # Гибернация: закрыл крышку -> RAM ушла в swapfile -> открыл -> все работает
-  boot.resumeDevice = "/dev/disk/by-uuid/$ROOT_UUID";
-  boot.kernelParams = [ "resume_offset=$RESUME_OFFSET" ];
-
-  swapDevices = [ {
-    device = "/var/lib/swapfile";
-  } ];
+  # Гибернация: закрыл крышку -> RAM ушла в swap -> открыл -> все работает
+  boot.resumeDevice = "$RESUME_DEV";
+  $RESUME_OFFSET_LINE
+  $SWAP_DEVICES_LINE
 
   # Гибернация по закрытию крышки (и от батареи, и от сети)
   services.logind = {
