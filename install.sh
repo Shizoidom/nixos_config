@@ -470,10 +470,6 @@ cat <<EOF > "$TARGET_DIR/home/hyprland.nix"
       env = WLR_NO_HARDWARE_CURSORS,1
       env = QT_QPA_PLATFORM,wayland
 
-      render {
-          vfr = true
-      }
-
       misc {
           disable_hyprland_logo = true
           force_default_wallpaper = 0
@@ -518,15 +514,11 @@ cat <<EOF > "$TARGET_DIR/home/hyprland.nix"
       }
 
       dwindle {
-          pseudo_tile = true
           preserve_split = true
       }
 
-      # Правила для плавающих окон
-      windowrule = float, class:^(pavucontrol)$
-      windowrule = float, class:^(blueman-manager)$
-      windowrule = float, class:^(clash-verge)$
-      windowrule = float, class:^(org.kde.dolphin)$,title:^(Progress Dialog.*)$
+      # Плавающие окна (pavucontrol/blueman/clash) - в Hyprland 0.55+ windowrule
+      # переведен на Lua (hl.window_rule), поэтому правила убраны до миграции.
 
       \$mainMod = SUPER
 
