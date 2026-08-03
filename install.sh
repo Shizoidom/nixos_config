@@ -2,40 +2,57 @@
 
 set -e
 
-# Автоопределение реального пользователя (даже при запуске через sudo)
-REAL_USER=${SUDO_USER:-$(logname 2>/dev/null || echo $USER)}
-USER_GROUP=$(id -gn "$REAL_USER" 2>/dev/null || echo "users")
-TARGET_DIR="/home/$REAL_USER/.config/nixos"
+# ==============================================================================
+# NixOS one-shot installer: Hyprland + гибернация (крышка) + GRUB dual boot
+# (Windows на отдельном SSD) + NVIDIA RTX 5070M (open-модули Blackwell).
+#
+# Запуск:  curl -sSL https://raw.githubusercontent.com/Shizoidom/nixos_config/main/install.sh | sudo bash
+# Аргументы: install.sh [username]   (по умолчанию: next)
+# ==============================================================================
 
-if [ "$REAL_USER" = "root" ]; then
-    echo "❌ Ошибка: Скрипт не должен запускаться от имени чистого root без SUDO_USER!"
+USERNAME="${1:-next}"
+
+# Перезапуск через sudo, если запущено от обычного пользователя
+[ "$(id -u)" -eq 0 ] || exec sudo bash "$0" "$@"
+
+# Включаем flakes для первой сборки (до пересборки системы)
+export NIX_CONFIG="experimental-features = nix-command flakes"
+
+USER_GROUP=$(id -gn "$USERNAME" 2>/dev/null || echo "users")
+TARGET_DIR="/home/$USERNAME/.config/nixos"
+
+if [ "$USERNAME" = "root" ]; then
+    echo "❌ Ошибка: имя пользователя не может быть root!"
     exit 1
 fi
 
-echo "⚙️ Запуск развертывания NixOS/Hyprland для пользователя: $REAL_USER ($TARGET_DIR)..."
+echo "⚙️ Запуск развертывания NixOS/Hyprland для пользователя: $USERNAME ($TARGET_DIR)..."
 
 # ==============================================================================
 # 1. Подготовка каталогов и прав
 # ==============================================================================
-echo "📂 [1/13] Создание структуры каталогов..."
+echo "📂 [1/15] Создание структуры каталогов..."
 mkdir -p "$TARGET_DIR/system" "$TARGET_DIR/home"
-chown -R "$REAL_USER:$USER_GROUP" "$TARGET_DIR"
+chown -R "$USERNAME:$USER_GROUP" "$TARGET_DIR"
 
 # ==============================================================================
 # 2. Проверка и копирование hardware-configuration.nix
 # ==============================================================================
-echo "🖥️ [2/13] Проверка hardware-configuration.nix..."
+echo "🖥️ [2/15] Проверка hardware-configuration.nix..."
 if [ -f /etc/nixos/hardware-configuration.nix ]; then
     cp /etc/nixos/hardware-configuration.nix "$TARGET_DIR/system/hardware-configuration.nix"
 else
-    echo "❌ Ошибка: /etc/nixos/hardware-configuration.nix не найден!"
-    exit 1
+    echo "🖥️ hardware-configuration.nix не найден - генерируем заново..."
+    nixos-generate-config --root / --dir "$TARGET_DIR/system" >/dev/null 2>&1 || {
+        echo "❌ Ошибка: не удалось сгенерировать hardware-configuration.nix!"
+        exit 1
+    }
 fi
 
 # ==============================================================================
 # 3. Flake.nix
 # ==============================================================================
-echo "❄️ [3/13] Генерация flake.nix..."
+echo "❄️ [3/15] Генерация flake.nix..."
 cat <<EOF > "$TARGET_DIR/flake.nix"
 {
   description = "Complete Dotfiles and NixOS Config for Mechrevo";
@@ -60,7 +77,7 @@ cat <<EOF > "$TARGET_DIR/flake.nix"
         {
           home-manager.useGlobalPkgs = true;
           home-manager.useUserPackages = true;
-          home-manager.users.$REAL_USER = import ./home/home.nix;
+          home-manager.users.$USERNAME = import ./home/home.nix;
         }
       ];
     };
@@ -69,9 +86,9 @@ cat <<EOF > "$TARGET_DIR/flake.nix"
 EOF
 
 # ==============================================================================
-# 4. Настройка Nvidia RTX 5070M + AMD PRIME
+# 4. Настройка NVIDIA RTX 5070M (Blackwell - только open-модули ядра)
 # ==============================================================================
-echo "🎮 [4/13] Генерация system/nvidia.nix..."
+echo "🎮 [4/15] Генерация system/nvidia.nix..."
 cat <<EOF > "$TARGET_DIR/system/nvidia.nix"
 { config, pkgs, ... }:
 
@@ -87,18 +104,9 @@ cat <<EOF > "$TARGET_DIR/system/nvidia.nix"
     modesetting.enable = true;
     powerManagement.enable = true;
     powerManagement.finegrained = true;
-    open = false;
+    open = true; # RTX 50 series (Blackwell) работает ТОЛЬКО с open-модулями
     nvidiaSettings = true;
-    package = config.boot.kernelPackages.nvidiaPackages.stable;
-
-    prime = {
-      offload = {
-        enable = true;
-        enableOffloadCmd = true;
-      };
-      amdgpuBusId = "PCI:75:0:0";
-      nvidiaBusId = "PCI:1:0:0";
-    };
+    package = config.boot.kernelPackages.nvidiaPackages.latest;
   };
 
   environment.sessionVariables = {
@@ -112,15 +120,73 @@ cat <<EOF > "$TARGET_DIR/system/nvidia.nix"
 EOF
 
 # ==============================================================================
-# 5. Системный конфигуратор (SDDM, Pipewire, Zsh, Fonts, Nix Optimizations)
+# 5. Hibernation: swapfile размером с RAM + параметры resume
 # ==============================================================================
-echo "⚙️ [5/13] Генерация system/configuration.nix..."
+echo "💾 [5/15] Создание swapfile для гибернации (размер = RAM)..."
+
+MEM_KB=$(awk '/^MemTotal:/{print $2}' /proc/meminfo)
+SWAP_MB=$((MEM_KB / 1024))
+[ -f /var/lib/swapfile ] && rm -f /var/lib/swapfile
+
+if ! fallocate -l "${SWAP_MB}M" /var/lib/swapfile 2>/dev/null; then
+    dd if=/dev/zero of=/var/lib/swapfile bs=1M count="$SWAP_MB" status=progress
+fi
+chmod 600 /var/lib/swapfile
+mkswap /var/lib/swapfile >/dev/null
+swapon /var/lib/swapfile 2>/dev/null || true
+echo "✅ Swapfile: /var/lib/swapfile (${SWAP_MB} MB)"
+
+# Физическое смещение swapfile - нужно для resume после гибернации
+if command -v filefrag >/dev/null 2>&1; then
+    OFFSET_BLOCK=$(filefrag -v /var/lib/swapfile | awk '/^[[:space:]]*0:/{split($3,p,".."); gsub(":","",p[1]); print p[1]; exit}')
+else
+    echo "🔧 filefrag не найден - устанавливаем e2fsprogs..."
+    OFFSET_BLOCK=$(nix-shell -p e2fsprogs --run "filefrag -v /var/lib/swapfile | awk '/^[[:space:]]*0:/{split(\$3,p,\"..\"); gsub(\":\",\"\",p[1]); print p[1]; exit}'")
+fi
+if [ -z "$OFFSET_BLOCK" ]; then
+    echo "❌ Ошибка: не удалось определить смещение swapfile (для гибернации нужен ext4 root)!"
+    exit 1
+fi
+RESUME_OFFSET=$((OFFSET_BLOCK * 4096))
+ROOT_UUID=$(findmnt -no UUID /)
+
+if [ "$(findmnt -no FSTYPE /)" = "btrfs" ]; then
+    echo "⚠️ Внимание: корневой раздел btrfs - гибернация со swapfile может не работать!"
+fi
+echo "✅ resume_offset=${RESUME_OFFSET} | root UUID=${ROOT_UUID}"
+
+# ==============================================================================
+# 6. Системный конфигуратор (SDDM, Pipewire, Zsh, Fonts, Nix Optimizations,
+#    GRUB dual boot, гибернация)
+# ==============================================================================
+echo "⚙️ [6/15] Генерация system/configuration.nix..."
 cat <<EOF > "$TARGET_DIR/system/configuration.nix"
 { pkgs, ... }:
 
 {
-  boot.loader.systemd-boot.enable = true;
+  # GRUB вместо systemd-boot - нужен для dual boot с Windows (os-prober)
+  boot.loader.grub = {
+    enable = true;
+    device = "nodev"; # установка в EFI-раздел
+    efiSupport = true;
+    efiInstallAsRemovable = true;
+    useOSProber = true; # найдет Windows на втором SSD
+  };
   boot.loader.efi.canTouchEfiVariables = true;
+
+  # Гибернация: закрыл крышку -> RAM ушла в swapfile -> открыл -> все работает
+  boot.resumeDevice = "/dev/disk/by-uuid/$ROOT_UUID";
+  boot.kernelParams = [ "resume_offset=$RESUME_OFFSET" ];
+
+  swapDevices = [ {
+    device = "/var/lib/swapfile";
+  } ];
+
+  # Гибернация по закрытию крышки (и от батареи, и от сети)
+  services.logind = {
+    lidSwitch = "hibernate";
+    lidSwitchExternalPower = "hibernate";
+  };
 
   nixpkgs.config.allowUnfree = true;
 
@@ -188,7 +254,7 @@ cat <<EOF > "$TARGET_DIR/system/configuration.nix"
     wl-clipboard
   ];
 
-  users.users.$REAL_USER = {
+  users.users.$USERNAME = {
     isNormalUser = true;
     extraGroups = [ "wheel" "networkmanager" "video" "audio" "input" ];
     shell = pkgs.zsh;
@@ -201,7 +267,7 @@ EOF
 # ==============================================================================
 # 6. Конфигурация Kitty Terminal
 # ==============================================================================
-echo "💻 [6/13] Генерация home/kitty.nix..."
+echo "💻 [7/15] Генерация home/kitty.nix..."
 cat <<EOF > "$TARGET_DIR/home/kitty.nix"
 { pkgs, ... }:
 
@@ -251,7 +317,7 @@ EOF
 # ==============================================================================
 # 7. Конфигурация Fuzzel (App Launcher)
 # ==============================================================================
-echo "🔍 [7/13] Генерация home/fuzzel.nix..."
+echo "🔍 [8/15] Генерация home/fuzzel.nix..."
 cat <<EOF > "$TARGET_DIR/home/fuzzel.nix"
 { pkgs, ... }:
 
@@ -291,7 +357,7 @@ EOF
 # ==============================================================================
 # 8. Конфигурация SwayNC (Центр уведомлений)
 # ==============================================================================
-echo "🔔 [8/13] Генерация home/swaync.nix..."
+echo "🔔 [9/15] Генерация home/swaync.nix..."
 cat <<EOF > "$TARGET_DIR/home/swaync.nix"
 { pkgs, ... }:
 
@@ -333,7 +399,7 @@ EOF
 # ==============================================================================
 # 9. Настройки Hyprland
 # ==============================================================================
-echo "🖼️ [9/13] Генерация home/hyprland.nix..."
+echo "🖼️ [10/15] Генерация home/hyprland.nix..."
 cat <<EOF > "$TARGET_DIR/home/hyprland.nix"
 { pkgs, ... }:
 
@@ -470,7 +536,7 @@ EOF
 # ==============================================================================
 # 10. Конфигурация Waybar
 # ==============================================================================
-echo "📊 [10/13] Генерация home/waybar.nix..."
+echo "📊 [11/15] Генерация home/waybar.nix..."
 cat <<EOF > "$TARGET_DIR/home/waybar.nix"
 { pkgs, ... }:
 
@@ -612,7 +678,7 @@ EOF
 # ==============================================================================
 # 11. Home Manager (Основные приложения пользователя + Актуальный синтаксис)
 # ==============================================================================
-echo "🏠 [11/13] Генерация home/home.nix..."
+echo "🏠 [12/15] Генерация home/home.nix..."
 cat <<EOF > "$TARGET_DIR/home/home.nix"
 { pkgs, ... }:
 
@@ -625,8 +691,8 @@ cat <<EOF > "$TARGET_DIR/home/home.nix"
     ./swaync.nix
   ];
 
-  home.username = "$REAL_USER";
-  home.homeDirectory = "/home/$REAL_USER";
+  home.username = "$USERNAME";
+  home.homeDirectory = "/home/$USERNAME";
 
   home.packages = with pkgs; [
     # Терминал и системные утилиты
@@ -682,8 +748,8 @@ cat <<EOF > "$TARGET_DIR/home/home.nix"
     enable = true;
     settings = {
       user = {
-        name = "$REAL_USER";
-        email = "$REAL_USER@local";
+        name = "$USERNAME";
+        email = "$USERNAME@local";
       };
     };
   };
@@ -694,29 +760,46 @@ cat <<EOF > "$TARGET_DIR/home/home.nix"
 EOF
 
 # ==============================================================================
-# 12. Передача прав пользователю
+# 13. Передача прав пользователю
 # ==============================================================================
-echo "🔑 [12/13] Настройка прав доступа для $REAL_USER..."
-chown -R "$REAL_USER:$USER_GROUP" "$TARGET_DIR"
+echo "🔑 [13/15] Настройка прав доступа для $USERNAME..."
+chown -R "$USERNAME:$USER_GROUP" "$TARGET_DIR"
 
 cd "$TARGET_DIR"
 
 # ==============================================================================
-# 13. Инициализация локального Git-репозитория и запуск сборки
+# 14. Инициализация локального Git-репозитория и запуск сборки
 # ==============================================================================
-echo "📦 [13/13] Подготовка Git-репозитория и запуск nixos-rebuild..."
+echo "📦 [14/15] Подготовка Git-репозитория и запуск nixos-rebuild..."
 
 # Запускаем git через nix-shell -p git, чтобы не требовать заранее установленного git в системе
 nix-shell -p git --run "
   git config --global --add safe.directory '$TARGET_DIR' 2>/dev/null || true
-  sudo -u '$REAL_USER' git -C '$TARGET_DIR' init 2>/dev/null || true
-  sudo -u '$REAL_USER' git -C '$TARGET_DIR' config user.name '$REAL_USER'
-  sudo -u '$REAL_USER' git -C '$TARGET_DIR' config user.email '$REAL_USER@local'
-  sudo -u '$REAL_USER' git -C '$TARGET_DIR' add -A
-  sudo -u '$REAL_USER' git -C '$TARGET_DIR' commit -m 'Automated nixos build setup' 2>/dev/null || true
+  sudo -u '$USERNAME' git -C '$TARGET_DIR' init 2>/dev/null || true
+  sudo -u '$USERNAME' git -C '$TARGET_DIR' config user.name '$USERNAME'
+  sudo -u '$USERNAME' git -C '$TARGET_DIR' config user.email '$USERNAME@local'
+  sudo -u '$USERNAME' git -C '$TARGET_DIR' add -A
+  sudo -u '$USERNAME' git -C '$TARGET_DIR' commit -m 'Automated nixos build setup' 2>/dev/null || true
 "
 
 echo "🚀 Сборка системы NixOS..."
 nixos-rebuild switch --flake "$TARGET_DIR#mechrevo"
 
-echo "✅ Система успешно собрана! Выполни: sudo reboot"
+# ==============================================================================
+# 15. Пароль пользователя (если его еще нет)
+# ==============================================================================
+echo "🔐 [15/15] Проверка пароля пользователя..."
+if getent passwd "$USERNAME" >/dev/null; then
+    PW_HASH=$(getent shadow "$USERNAME" | cut -d: -f2)
+    case "$PW_HASH" in
+        "" | "!"* | "*"*)
+            echo "⚠️ У пользователя $USERNAME нет пароля - задай его сейчас:"
+            passwd "$USERNAME" ;;
+    esac
+fi
+
+echo "✅ Готово! Система собрана."
+echo "   Выполни: sudo reboot"
+echo "   - GRUB покажет NixOS и Windows (dual boot)"
+echo "   - Закрытие крышки = гибернация"
+echo "   - Пересборка: sudo nixos-rebuild switch --flake ~/.config/nixos#mechrevo"
