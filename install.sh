@@ -103,7 +103,6 @@ cat <<EOF > "$TARGET_DIR/system/nvidia.nix"
   hardware.nvidia = {
     modesetting.enable = true;
     powerManagement.enable = true;
-    powerManagement.finegrained = true;
     open = true; # RTX 50 series (Blackwell) работает ТОЛЬКО с open-модулями
     nvidiaSettings = true;
     package = config.boot.kernelPackages.nvidiaPackages.latest;
@@ -146,7 +145,7 @@ done < <(lsblk -n -l -o NAME,TYPE,FSTYPE,UUID 2>/dev/null || true)
 
 if [ -n "$SWAP_UUID" ]; then
     # Гибернация через swap-раздел: resume_offset не нужен, работает на любой ФС
-    RESUME_DEV="UUID=${SWAP_UUID}"
+    RESUME_DEV="/dev/disk/by-uuid/${SWAP_UUID}"
     RESUME_OFFSET_LINE=""
     echo "✅ Найден swap-раздел /dev/${SWAP_NAME} (UUID=${SWAP_UUID}) - используем его"
     if grep -qi "swap" "$TARGET_DIR/system/hardware-configuration.nix"; then
@@ -179,7 +178,7 @@ else
         exit 1
     fi
     RESUME_OFFSET=$((OFFSET_BLOCK * 4096))
-    RESUME_DEV="UUID=$(findmnt -no UUID /)"
+    RESUME_DEV="/dev/disk/by-uuid/$(findmnt -no UUID /)"
     RESUME_OFFSET_LINE="boot.kernelParams = [ \"resume_offset=${RESUME_OFFSET}\" ];"
     SWAP_DEVICES_LINE="swapDevices = [ { device = \"/var/lib/swapfile\"; } ];"
     echo "✅ resume_offset=${RESUME_OFFSET}"
@@ -204,10 +203,9 @@ cat <<EOF > "$TARGET_DIR/system/configuration.nix"
     enable = true;
     device = "nodev"; # установка в EFI-раздел
     efiSupport = true;
-    efiInstallAsRemovable = true;
+    efiInstallAsRemovable = true; # нельзя вместе с canTouchEfiVariables
     useOSProber = true; # найдет Windows на втором SSD
   };
-  boot.loader.efi.canTouchEfiVariables = true;
 
   # Гибернация: закрыл крышку -> RAM ушла в swap -> открыл -> все работает
   boot.resumeDevice = "$RESUME_DEV";
@@ -297,7 +295,7 @@ cat <<EOF > "$TARGET_DIR/system/configuration.nix"
 EOF
 
 # ==============================================================================
-# 6. Конфигурация Kitty Terminal
+# 7. Конфигурация Kitty Terminal
 # ==============================================================================
 echo "💻 [7/15] Генерация home/kitty.nix..."
 cat <<EOF > "$TARGET_DIR/home/kitty.nix"
@@ -347,7 +345,7 @@ cat <<EOF > "$TARGET_DIR/home/kitty.nix"
 EOF
 
 # ==============================================================================
-# 7. Конфигурация Fuzzel (App Launcher)
+# 8. Конфигурация Fuzzel (App Launcher)
 # ==============================================================================
 echo "🔍 [8/15] Генерация home/fuzzel.nix..."
 cat <<EOF > "$TARGET_DIR/home/fuzzel.nix"
@@ -387,7 +385,7 @@ cat <<EOF > "$TARGET_DIR/home/fuzzel.nix"
 EOF
 
 # ==============================================================================
-# 8. Конфигурация SwayNC (Центр уведомлений)
+# 9. Конфигурация SwayNC (Центр уведомлений)
 # ==============================================================================
 echo "🔔 [9/15] Генерация home/swaync.nix..."
 cat <<EOF > "$TARGET_DIR/home/swaync.nix"
@@ -429,7 +427,7 @@ cat <<EOF > "$TARGET_DIR/home/swaync.nix"
 EOF
 
 # ==============================================================================
-# 9. Настройки Hyprland
+# 10. Настройки Hyprland
 # ==============================================================================
 echo "🖼️ [10/15] Генерация home/hyprland.nix..."
 cat <<EOF > "$TARGET_DIR/home/hyprland.nix"
@@ -438,7 +436,7 @@ cat <<EOF > "$TARGET_DIR/home/hyprland.nix"
 {
   wayland.windowManager.hyprland = {
     enable = true;
-
+    configType = "hyprlang"; # legacy-формат конфига (иначе сломается extraConfig)
     extraConfig = ''
       monitor = eDP-1, 2560x1600@240, 0x0, 1.25
       monitor = , preferred, auto, 1.0
@@ -566,7 +564,7 @@ cat <<EOF > "$TARGET_DIR/home/hyprland.nix"
 EOF
 
 # ==============================================================================
-# 10. Конфигурация Waybar
+# 11. Конфигурация Waybar
 # ==============================================================================
 echo "📊 [11/15] Генерация home/waybar.nix..."
 cat <<EOF > "$TARGET_DIR/home/waybar.nix"
@@ -708,7 +706,7 @@ cat <<EOF > "$TARGET_DIR/home/waybar.nix"
 EOF
 
 # ==============================================================================
-# 11. Home Manager (Основные приложения пользователя + Актуальный синтаксис)
+# 12. Home Manager (Основные приложения пользователя + Актуальный синтаксис)
 # ==============================================================================
 echo "🏠 [12/15] Генерация home/home.nix..."
 cat <<EOF > "$TARGET_DIR/home/home.nix"
