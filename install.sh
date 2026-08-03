@@ -1134,6 +1134,11 @@ chown -R "$USERNAME:$USER_GROUP" /home/$USERNAME/.config 2>/dev/null || true
 # ==============================================================================
 echo "🌬️ [13c/15] Настройка конфига кулеров (nbfc)..."
 mkdir -p /var/lib/nbfc/configs /home/$USERNAME/.config
+# Авто-миграция: старый битый формат (полный конфиг в nbfc.json) -> новый
+if [ -f /home/$USERNAME/.config/nbfc.json ] && grep -q '"NotebookModel"' /home/$USERNAME/.config/nbfc.json 2>/dev/null; then
+  echo "   устаревший формат nbfc.json - удаляю и создаю заново"
+  rm -f /home/$USERNAME/.config/nbfc.json
+fi
 if [ ! -f /home/$USERNAME/.config/nbfc.json ]; then
 cat <<'NBFC_EOF' > /var/lib/nbfc/configs/mechrevo-x6r.json
 {
