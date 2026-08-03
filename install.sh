@@ -290,8 +290,10 @@ cat <<EOF > "$TARGET_DIR/system/configuration.nix"
     wantedBy = [ "multi-user.target" ];
     serviceConfig = {
       Type = "oneshot";
-      ExecStart = "${pkgs.ryzenadj}/bin/ryzenadj --stapm-limit=65000 --fast-limit=70000 --slow-limit=60000";
-      ExecStart = "/run/current-system/sw/bin/nvidia-smi -pl 115";
+      ExecStart = [
+        "${pkgs.ryzenadj}/bin/ryzenadj --stapm-limit=65000 --fast-limit=70000 --slow-limit=60000"
+        "/run/current-system/sw/bin/nvidia-smi -pl 115"
+      ];
     };
   };
 
