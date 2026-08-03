@@ -266,7 +266,34 @@ cat <<EOF > "$TARGET_DIR/system/configuration.nix"
   hardware.bluetooth.enable = true;
   services.blueman.enable = true;
 
-  services.power-profiles-daemon.enable = true;
+  # Всегда производительный режим: CPU governor + турбо-профиль при загрузке
+  powerManagement.cpuFreqGovernor = "performance";
+  environment.systemPackages = with pkgs; [ ryzenadj ];
+
+  # Профили питания (через ryzenadj TDP + nvidia-smi power limit):
+  #   eco     - CPU 40W, GPU 30W
+  #   balance - CPU 50W, GPU 80W
+  #   turbo   - CPU 65W, GPU 115W
+  # Переключение из waybar без пароля (NOPASSWD только для этих двух команд)
+  security.sudo.extraRules = [
+    {
+      users = [ "$USERNAME" ];
+      commands = [
+        { command = "/run/current-system/sw/bin/ryzenadj"; options = [ "NOPASSWD" ]; }
+        { command = "/run/current-system/sw/bin/nvidia-smi"; options = [ "NOPASSWD" ]; }
+      ];
+    }
+  ];
+
+  # Применяем турбо-профиль при каждой загрузке
+  systemd.services.turbo-profile = {
+    wantedBy = [ "multi-user.target" ];
+    serviceConfig = {
+      Type = "oneshot";
+      ExecStart = "${pkgs.ryzenadj}/bin/ryzenadj --stapm-limit=65000 --fast-limit=70000 --slow-limit=60000";
+      ExecStart = "/run/current-system/sw/bin/nvidia-smi -pl 115";
+    };
+  };
 
   # Шрифты (актуализированный пакет эмодзи)
   fonts.packages = with pkgs; [
@@ -607,15 +634,9 @@ cat <<EOF > "$TARGET_DIR/home/waybar.nix"
       margin-left = 10;
       margin-right = 10;
 
-      modules-left = [ "custom/menu" "hyprland/workspaces" "hyprland/window" "custom/layout" "keyboard-state" ];
+      modules-left = [ "hyprland/workspaces" "hyprland/window" "custom/layout" "custom/caps" ];
       modules-center = [ "clock" ];
       modules-right = [ "pulseaudio" "cpu" "memory" "custom/cpu-temp" "custom/gpu-temp" "network" "battery" "tray" "custom/power-mode" "custom/power" ];
-
-      "custom/menu" = {
-        format = "";
-        on-click = "fuzzel";
-        tooltip = false;
-      };
 
       "custom/power" = {
         format = "";
@@ -632,21 +653,17 @@ cat <<EOF > "$TARGET_DIR/home/waybar.nix"
       };
 
       # Индикатор Caps Lock
-      "keyboard-state" = {
-        capslock = true;
-        numlock = false;
-        format = "{icon}";
-        format-icons = {
-          locked = "";
-          unlocked = "";
-        };
+      "custom/caps" = {
+        exec = "~/.local/bin/caps";
+        interval = 2;
+        tooltip = false;
       };
 
-      # Режим питания (клик - меню выбора в fuzzel)
+      # Режим питания (клик - меню eco/balance/turbo в fuzzel)
       "custom/power-mode" = {
         exec = "~/.local/bin/power-mode";
-        on-click = "printf 'power-saver\nbalanced\nperformance' | fuzzel --dmenu -p 'Mode: ' | xargs -r powerprofilesctl set";
-        interval = 10;
+        on-click = "printf 'eco\nbalance\nturbo' | fuzzel --dmenu -p 'Mode: ' | xargs -r ~/.local/bin/power-mode-set";
+        interval = 5;
         tooltip = false;
       };
 
@@ -756,7 +773,7 @@ cat <<EOF > "$TARGET_DIR/home/waybar.nix"
         color: #b4befe;
       }
 
-      #clock, #cpu, #memory, #custom-cpu-temp, #custom-gpu-temp, #network, #pulseaudio, #battery, #tray, #custom-menu, #custom-power, #custom-layout, #custom-power-mode, #keyboard-state {
+      #clock, #cpu, #memory, #custom-cpu-temp, #custom-gpu-temp, #network, #pulseaudio, #battery, #tray, #custom-power, #custom-layout, #custom-power-mode, #custom-caps {
         background-color: #1e1e2e;
         padding: 4px 12px;
         border-radius: 10px;
@@ -773,14 +790,14 @@ cat <<EOF > "$TARGET_DIR/home/waybar.nix"
       #pulseaudio { color: #f5c2e7; }
       #battery { color: #94e2d5; }
       #tray { padding: 0 10px; }
-      #custom-menu, #custom-power { color: #cba6f7; }
+      #custom-power { color: #cba6f7; }
       #custom-layout { color: #b4befe; }
       #custom-power-mode { color: #a6e3a1; }
-      #keyboard-state { color: #f38ba8; }
+      #custom-caps { color: #f38ba8; }
     '';
   };
 
-  # Скрипты для waybar: индикатор раскладки и режима питания
+  # Скрипты для waybar: раскладка, режим питания
   home.file.".local/bin/layout" = {
     executable = true;
     text = ''
@@ -793,16 +810,50 @@ cat <<EOF > "$TARGET_DIR/home/waybar.nix"
     '';
   };
 
+  # Индикатор Caps Lock
+  home.file.".local/bin/caps" = {
+    executable = true;
+    text = ''
+      #!/usr/bin/env bash
+      state=\$(hyprctl devices -j | jq -r '.keyboards[] | select(.main == true) | .capsLockState' 2>/dev/null | head -n1)
+      [ \"\$state\" = \"true\" ] && echo \"\" || echo \"\"
+    '';
+  };
+
+  # Текущий режим питания (определяем по фактическому лимиту GPU)
   home.file.".local/bin/power-mode" = {
     executable = true;
     text = ''
       #!/usr/bin/env bash
-      mode=\$(powerprofilesctl get 2>/dev/null)
-      case \"\$mode\" in
-        power-saver) echo \"\" ;;
-        balanced) echo \"\" ;;
-        performance) echo \"\" ;;
+      lim=\$(nvidia-smi --query-gpu=power.limit --format=csv,noheader 2>/dev/null | head -n1)
+      lim=\${lim%%.*}
+      case \"\$lim\" in
+        115) echo \"\" ;;
+        80) echo \"\" ;;
+        30) echo \"\" ;;
         *) echo \"\" ;;
+      esac
+    '';
+  };
+
+  # Переключение режима питания: eco (40W/30W), balance (50W/80W), turbo (65W/115W)
+  home.file.".local/bin/power-mode-set" = {
+    executable = true;
+    text = ''
+      #!/usr/bin/env bash
+      case \"\$1\" in
+        eco)
+          sudo ryzenadj --stapm-limit=40000 --fast-limit=40000 --slow-limit=35000
+          sudo nvidia-smi -pl 30
+          ;;
+        balance)
+          sudo ryzenadj --stapm-limit=50000 --fast-limit=55000 --slow-limit=45000
+          sudo nvidia-smi -pl 80
+          ;;
+        turbo)
+          sudo ryzenadj --stapm-limit=65000 --fast-limit=70000 --slow-limit=60000
+          sudo nvidia-smi -pl 115
+          ;;
       esac
     '';
   };
@@ -884,6 +935,7 @@ cat <<EOF > "$TARGET_DIR/home/home.nix"
     # Настройки и меню питания
     pavucontrol
     wlogout
+    hyprlock
 
     # Утилиты
     jq
@@ -923,6 +975,71 @@ cat <<EOF > "$TARGET_DIR/home/home.nix"
         email = "$USERNAME@local";
       };
     };
+  };
+
+  # Меню выключения wlogout: lock / logout / reboot / shutdown / hibernate
+  home.file.".config/wlogout/layout" = {
+    text = ''
+      {
+          "label" : "lock",
+          "action" : "hyprlock",
+          "text" : "",
+          "keybind" : "l"
+      }
+      {
+          "label" : "logout",
+          "action" : "hyprctl dispatch exit",
+          "text" : "",
+          "keybind" : "e"
+      }
+      {
+          "label" : "reboot",
+          "action" : "systemctl reboot",
+          "text" : "",
+          "keybind" : "r"
+      }
+      {
+          "label" : "shutdown",
+          "action" : "systemctl poweroff",
+          "text" : "",
+          "keybind" : "s"
+      }
+      {
+          "label" : "hibernate",
+          "action" : "systemctl hibernate",
+          "text" : "",
+          "keybind" : "h"
+      }
+    '';
+  };
+
+  home.file.".config/wlogout/style.css" = {
+    text = ''
+      * {
+        font-family: "JetBrainsMono Nerd Font";
+        font-size: 18px;
+        color: #cdd6f4;
+      }
+      window {
+        background-color: rgba(17, 17, 27, 0.85);
+      }
+      button {
+        background-color: #1e1e2e;
+        border: 2px solid #313244;
+        border-radius: 12px;
+        margin: 10px;
+        padding: 20px;
+      }
+      button:hover {
+        background-color: #313244;
+        border-color: #cba6f7;
+      }
+      #lock { color: #89b4fa; }
+      #logout { color: #f5c2e7; }
+      #reboot { color: #f9e2af; }
+      #shutdown { color: #f38ba8; }
+      #hibernate { color: #94e2d5; }
+    '';
   };
 
   programs.home-manager.enable = true;
