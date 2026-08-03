@@ -706,15 +706,15 @@ cd "$TARGET_DIR"
 # ==============================================================================
 echo "📦 [13/13] Подготовка Git-репозитория и запуск nixos-rebuild..."
 
-# Разрешаем git работать в этой директории
-git config --global --add safe.directory "$TARGET_DIR" 2>/dev/null || true
-
-# Выполняем git-команды от имени пользователя через sudo -u (работает без TTY)
-sudo -u "$REAL_USER" git -C "$TARGET_DIR" init 2>/dev/null || true
-sudo -u "$REAL_USER" git -C "$TARGET_DIR" config user.name "$REAL_USER"
-sudo -u "$REAL_USER" git -C "$TARGET_DIR" config user.email "$REAL_USER@local"
-sudo -u "$REAL_USER" git -C "$TARGET_DIR" add -A
-sudo -u "$REAL_USER" git -C "$TARGET_DIR" commit -m "Automated nixos build setup" 2>/dev/null || true
+# Запускаем git через nix-shell -p git, чтобы не требовать заранее установленного git в системе
+nix-shell -p git --run "
+  git config --global --add safe.directory '$TARGET_DIR' 2>/dev/null || true
+  sudo -u '$REAL_USER' git -C '$TARGET_DIR' init 2>/dev/null || true
+  sudo -u '$REAL_USER' git -C '$TARGET_DIR' config user.name '$REAL_USER'
+  sudo -u '$REAL_USER' git -C '$TARGET_DIR' config user.email '$REAL_USER@local'
+  sudo -u '$REAL_USER' git -C '$TARGET_DIR' add -A
+  sudo -u '$REAL_USER' git -C '$TARGET_DIR' commit -m 'Automated nixos build setup' 2>/dev/null || true
+"
 
 echo "🚀 Сборка системы NixOS..."
 nixos-rebuild switch --flake "$TARGET_DIR#mechrevo"
