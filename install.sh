@@ -244,6 +244,13 @@ cat <<EOF > "$TARGET_DIR/system/configuration.nix"
   };
   services.displayManager.defaultSession = "hyprland";
 
+  # Русская раскладка (переключение RU/EN: Ctrl+Shift) - для X11/SDDM приложений
+  services.xserver.xkb.layout = "us,ru";
+  services.xserver.xkb.options = "grp:ctrl_shift_toggle";
+
+  # Режимы питания: экономичный / сбалансированный / производительный
+  services.power-profiles-daemon.enable = true;
+
   programs.hyprland = {
     enable = true;
     xwayland.enable = true;
@@ -470,6 +477,11 @@ cat <<EOF > "$TARGET_DIR/home/hyprland.nix"
       env = WLR_NO_HARDWARE_CURSORS,1
       env = QT_QPA_PLATFORM,wayland
 
+      input {
+          kb_layout = us,ru
+          kb_options = grp:ctrl_shift_toggle
+      }
+
       misc {
           disable_hyprland_logo = true
           force_default_wallpaper = 0
@@ -598,9 +610,9 @@ cat <<EOF > "$TARGET_DIR/home/waybar.nix"
       margin-left = 10;
       margin-right = 10;
 
-      modules-left = [ "custom/menu" "hyprland/workspaces" "hyprland/window" ];
+      modules-left = [ "custom/menu" "hyprland/workspaces" "hyprland/window" "custom/layout" "keyboard-state" ];
       modules-center = [ "clock" ];
-      modules-right = [ "pulseaudio" "cpu" "memory" "temperature" "network" "battery" "tray" "custom/power" ];
+      modules-right = [ "pulseaudio" "cpu" "memory" "temperature" "network" "battery" "tray" "custom/power-mode" "custom/power" ];
 
       "custom/menu" = {
         format = "";
@@ -611,6 +623,33 @@ cat <<EOF > "$TARGET_DIR/home/waybar.nix"
       "custom/power" = {
         format = "";
         on-click = "wlogout -b 5";
+        tooltip = false;
+      };
+
+      # Индикатор текущей раскладки (клик - переключить RU/EN)
+      "custom/layout" = {
+        exec = "~/.local/bin/layout";
+        on-click = "hyprctl switchxkblayout all next";
+        interval = 2;
+        tooltip = false;
+      };
+
+      # Индикатор Caps Lock
+      "keyboard-state" = {
+        capslock = true;
+        numlock = false;
+        format = "{icon}";
+        format-icons = {
+          locked = "";
+          unlocked = "";
+        };
+      };
+
+      # Режим питания (клик - меню выбора в fuzzel)
+      "custom/power-mode" = {
+        exec = "~/.local/bin/power-mode";
+        on-click = "printf 'power-saver\nbalanced\nperformance' | fuzzel --dmenu -p 'Mode: ' | xargs -r powerprofilesctl set";
+        interval = 10;
         tooltip = false;
       };
 
@@ -637,7 +676,7 @@ cat <<EOF > "$TARGET_DIR/home/waybar.nix"
       };
 
       "memory" = {
-        format = " {percentage}%";
+        format = " {used:1}G / {total:0}G";
         interval = 2;
       };
 
@@ -713,7 +752,7 @@ cat <<EOF > "$TARGET_DIR/home/waybar.nix"
         color: #b4befe;
       }
 
-      #clock, #cpu, #memory, #temperature, #network, #pulseaudio, #battery, #tray {
+      #clock, #cpu, #memory, #temperature, #network, #pulseaudio, #battery, #tray, #custom-menu, #custom-power, #custom-layout, #custom-power-mode, #keyboard-state {
         background-color: #1e1e2e;
         padding: 4px 12px;
         border-radius: 10px;
@@ -729,6 +768,37 @@ cat <<EOF > "$TARGET_DIR/home/waybar.nix"
       #pulseaudio { color: #f5c2e7; }
       #battery { color: #94e2d5; }
       #tray { padding: 0 10px; }
+      #custom-menu, #custom-power { color: #cba6f7; }
+      #custom-layout { color: #b4befe; }
+      #custom-power-mode { color: #a6e3a1; }
+      #keyboard-state { color: #f38ba8; }
+    '';
+  };
+
+  # Скрипты для waybar: индикатор раскладки и режима питания
+  home.file.".local/bin/layout" = {
+    executable = true;
+    text = ''
+      #!/usr/bin/env bash
+      layout=\$(hyprctl devices -j | jq -r '.keyboards[] | select(.main == true) | .active_keymap' | head -n1)
+      case \"\$layout\" in
+        *Russian*) echo RU ;;
+        *) echo EN ;;
+      esac
+    '';
+  };
+
+  home.file.".local/bin/power-mode" = {
+    executable = true;
+    text = ''
+      #!/usr/bin/env bash
+      mode=\$(powerprofilesctl get 2>/dev/null)
+      case \"\$mode\" in
+        power-saver) echo \"\" ;;
+        balanced) echo \"\" ;;
+        performance) echo \"\" ;;
+        *) echo \"\" ;;
+      esac
     '';
   };
 }
@@ -785,6 +855,9 @@ cat <<EOF > "$TARGET_DIR/home/home.nix"
     # Настройки и меню питания
     pavucontrol
     wlogout
+
+    # Утилиты
+    jq
   ];
 
   # Темы GTK (Заглушен варнинг gtk4)
