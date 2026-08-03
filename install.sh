@@ -257,7 +257,7 @@ cat <<EOF > "$TARGET_DIR/home/home.nix"
 EOF
 
 # Права на каталог
-chown -R $REAL_USER:users "$TARGET_DIR"
+sudo chown -R $REAL_USER:users "$TARGET_DIR"
 
 cd "$TARGET_DIR"
 
