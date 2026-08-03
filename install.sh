@@ -664,7 +664,7 @@ cat <<EOF > "$TARGET_DIR/home/waybar.nix"
 
       # Индикатор текущей раскладки (клик - переключить RU/EN)
       "custom/layout" = {
-        exec = "~/.local/bin/layout";
+        exec = "/home/$USERNAME/.local/bin/layout";
         on-click = "hyprctl switchxkblayout all next";
         interval = 2;
         tooltip = false;
@@ -672,22 +672,22 @@ cat <<EOF > "$TARGET_DIR/home/waybar.nix"
 
       # Индикатор Caps Lock (замочек: закрыт - вкл, открыт - выкл)
       "custom/caps" = {
-        exec = "~/.local/bin/caps";
+        exec = "/home/$USERNAME/.local/bin/caps";
         interval = 2;
         tooltip = false;
       };
 
       # Режим питания (клик - меню eco/balance/turbo в fuzzel)
       "custom/power-mode" = {
-        exec = "~/.local/bin/power-mode";
-        on-click = "~/.local/bin/power-mode-menu";
+        exec = "/home/$USERNAME/.local/bin/power-mode";
+        on-click = "/home/$USERNAME/.local/bin/power-mode-menu";
         interval = 5;
         tooltip = false;
       };
 
       # Кулеры: RPM из nbfc; клик - статус/управление
       "custom/fan" = {
-        exec = "~/.local/bin/fan";
+        exec = "/home/$USERNAME/.local/bin/fan";
         on-click = "kitty -e bash -c 'nbfc status; echo; read -p \"Press enter...\"'";
         interval = 5;
         tooltip = false;
@@ -721,7 +721,7 @@ cat <<EOF > "$TARGET_DIR/home/waybar.nix"
       };
 
       "custom/temps" = {
-        exec = "~/.local/bin/temps";
+        exec = "/home/$USERNAME/.local/bin/temps";
         interval = 2;
         tooltip = false;
       };
@@ -822,6 +822,7 @@ cat <<EOF > "$TARGET_DIR/home/waybar.nix"
     executable = true;
     text = ''
       #!/usr/bin/env bash
+      export PATH="/run/current-system/sw/bin:/usr/bin:/bin:\$PATH"
       layout=\$(hyprctl devices -j | jq -r '.keyboards[] | select(.main == true) | .active_keymap' | head -n1)
       case \"\$layout\" in
         *Russian*) echo RU ;;
@@ -830,17 +831,22 @@ cat <<EOF > "$TARGET_DIR/home/waybar.nix"
     '';
   };
 
-  # Индикатор Caps Lock (закрытый/открытый замочек, иконки Nerd Font)
+  # Индикатор Caps Lock (закрытый/открытый замочек, иконки Nerd Font).
+  # Hyprland 0.41 не отдаёт состояние в hyprctl devices -j, поэтому читаем
+  # светодиод капслока из sysfs (как в X11-решениях), fallback - hyprctl.
   home.file.".local/bin/caps" = {
     executable = true;
     text = ''
       #!/usr/bin/env bash
-      state=\$(hyprctl devices -j 2>/dev/null | jq -r '.keyboards[] | select(.main == true) | (.capslockState // .capsLockState // false)' 2>/dev/null | head -n1)
-      if [ \"\$state\" = \"true\" ]; then
-        echo " "
-      else
-        echo " "
+      export PATH="/run/current-system/sw/bin:/usr/bin:/bin:\$PATH"
+      led=$(cat /sys/class/leds/input*::capslock/brightness 2>/dev/null | head -n1)
+      if [ -z "$led" ]; then
+        led=$(hyprctl devices -j 2>/dev/null | jq -r '([.keyboards[] | select(.main == true)] | .[0] // .keyboards[0] | (.capslockState // .capslock_state // false))' 2>/dev/null | head -n1)
       fi
+      case "$led" in
+        1|true) echo " " ;;
+        *)      echo " " ;;
+      esac
     '';
   };
 
@@ -850,6 +856,7 @@ cat <<EOF > "$TARGET_DIR/home/waybar.nix"
     executable = true;
     text = ''
       #!/usr/bin/env bash
+      export PATH="/run/current-system/sw/bin:/usr/bin:/bin:\$PATH"
       mode=\$(cat /tmp/power-mode 2>/dev/null | head -n1)
       if [ -z \"\$mode\" ]; then
         lim=\$(timeout 2 nvidia-smi --query-gpu=power.limit --format=csv,noheader 2>/dev/null | head -n1)
@@ -875,18 +882,19 @@ cat <<EOF > "$TARGET_DIR/home/waybar.nix"
     executable = true;
     text = ''
       #!/usr/bin/env bash
+      export PATH="/run/current-system/sw/bin:/usr/bin:/bin:\$PATH"
       case \"\$1\" in
         eco)
           sudo ryzenadj --stapm-limit=40000 --fast-limit=40000 --slow-limit=35000
-          sudo timeout 10 nvidia-smi -pl 5
+          timeout 10 sudo nvidia-smi -pl 5
           ;;
         balance)
           sudo ryzenadj --stapm-limit=50000 --fast-limit=55000 --slow-limit=45000
-          sudo timeout 10 nvidia-smi -pl 80
+          timeout 10 sudo nvidia-smi -pl 80
           ;;
         turbo)
           sudo ryzenadj --stapm-limit=65000 --fast-limit=70000 --slow-limit=60000
-          sudo timeout 10 nvidia-smi -pl 115
+          timeout 10 sudo nvidia-smi -pl 115
           ;;
         *) exit 1 ;;
       esac
@@ -900,8 +908,9 @@ cat <<EOF > "$TARGET_DIR/home/waybar.nix"
     executable = true;
     text = ''
       #!/usr/bin/env bash
+      export PATH="/run/current-system/sw/bin:/usr/bin:/bin:\$PATH"
       choice=\$(printf 'eco\nbalance\nturbo' | fuzzel --dmenu -p 'Mode: ' | head -n1)
-      [ -n \"\$choice\" ] && ~/.local/bin/power-mode-set \"\$choice\"
+      [ -n \"\$choice\" ] && \"\$HOME/.local/bin/power-mode-set\" \"\$choice\"
     '';
   };
 
@@ -910,11 +919,20 @@ cat <<EOF > "$TARGET_DIR/home/waybar.nix"
     executable = true;
     text = ''
       #!/usr/bin/env bash
+      export PATH="/run/current-system/sw/bin:/usr/bin:/bin:\$PATH"
       cpu=\"?\"
       for h in /sys/class/hwmon/hwmon*; do
         name=\$(cat \"\$h/name\" 2>/dev/null)
         [ \"\$name\" = \"k10temp\" ] && cpu=\$(cat \"\$h/temp1_input\" 2>/dev/null)
       done
+      if [ -z \"\$cpu\" ] || [ \"\$cpu\" = \"?\" ]; then
+        for h in /sys/class/hwmon/hwmon*; do
+          name=\$(cat \"\$h/name\" 2>/dev/null)
+          [ \"\$name\" = \"k10temp\" ] && continue
+          t=\$(cat \"\$h/temp1_input\" 2>/dev/null)
+          [ -n \"\$t\" ] && cpu=\"\$t\" && break
+        done
+      fi
       gpu=\"?\"
       t=\$(timeout 2 nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader 2>/dev/null | head -n1)
       if [ -n \"\$t\" ]; then
@@ -936,6 +954,7 @@ cat <<EOF > "$TARGET_DIR/home/waybar.nix"
     executable = true;
     text = ''
       #!/usr/bin/env bash
+      export PATH="/run/current-system/sw/bin:/usr/bin:/bin:\$PATH"
       out=\$(nbfc status 2>/dev/null) || exit 0
       echo \"\$out\" | jq -r '.FanSpeeds | map((.Value | tostring) + \"rpm\") | join(\" \")' 2>/dev/null | sed 's/^/ /'
     '';
