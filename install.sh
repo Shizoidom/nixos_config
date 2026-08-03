@@ -238,6 +238,7 @@ cat <<EOF > "$TARGET_DIR/system/configuration.nix"
   boot.kernelParams = [ "nvidia_drm.fbdev=1" ];
 
   # SDDM Display Manager (X11 greeter: wayland-kwin + NVIDIA вешает экран после входа)
+  services.xserver.enable = true; # X11 нужен для SDDM greeter (Hyprland останется Wayland-сессией)
   services.displayManager.sddm = {
     enable = true;
   };
