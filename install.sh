@@ -244,9 +244,9 @@ cat <<EOF > "$TARGET_DIR/system/configuration.nix"
   };
   services.displayManager.defaultSession = "hyprland";
 
-  # Русская раскладка (переключение RU/EN: Ctrl+Shift) - для X11/SDDM приложений
+  # Русская раскладка (переключение RU/EN: Alt+Shift) - для X11/SDDM приложений
   services.xserver.xkb.layout = "us,ru";
-  services.xserver.xkb.options = "grp:ctrl_shift_toggle";
+  services.xserver.xkb.options = "grp:alt_shift_toggle";
 
   programs.hyprland = {
     enable = true;
@@ -505,7 +505,7 @@ cat <<EOF > "$TARGET_DIR/home/hyprland.nix"
 
       input {
           kb_layout = us,ru
-          kb_options = grp:ctrl_shift_toggle
+          kb_options = grp:alt_shift_toggle
       }
 
       misc {
@@ -1072,6 +1072,21 @@ chown "$USERNAME:$USER_GROUP" /home/$USERNAME/Pictures/wallpaper.png 2>/dev/null
 # ==============================================================================
 echo "🔑 [13/15] Настройка прав доступа для $USERNAME..."
 chown -R "$USERNAME:$USER_GROUP" "$TARGET_DIR"
+
+# ==============================================================================
+# 13b. Бэкап старых конфигов (чтобы home-manager не ругался на существующие файлы)
+# ==============================================================================
+echo "🗂 [13b/15] Резервное копирование существующих конфигов..."
+for f in \
+  /home/$USERNAME/.config/hypr/hyprpaper.conf \
+  /home/$USERNAME/.config/hypr/hyprland.conf \
+  /home/$USERNAME/.config/waybar/config \
+  /home/$USERNAME/.config/gtk-3.0/settings.ini \
+  /home/$USERNAME/.config/gtk-4.0/settings.ini \
+  /home/$USERNAME/.gtkrc-2.0; do
+  [ -f "$f" ] && mv "$f" "$f.bak" 2>/dev/null && echo "   backup: $f"
+done
+chown -R "$USERNAME:$USER_GROUP" /home/$USERNAME/.config 2>/dev/null || true
 
 cd "$TARGET_DIR"
 
