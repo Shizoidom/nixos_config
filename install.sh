@@ -235,7 +235,11 @@ cat <<EOF > "$TARGET_DIR/system/configuration.nix"
 
   # NVIDIA: фикс чёрного экрана на новых драйверах (Blackwell)
   # + resume_offset для гибернации (если используется swapfile)
-  boot.kernelParams = [ "nvidia_drm.fbdev=1" ] ++ $RESUME_OFFSET_LIST;
+  # + ec_sys.write_support=1 для доступа к EC (кулеры, nbfc-linux)
+  boot.kernelParams = [ "nvidia_drm.fbdev=1" "ec_sys.write_support=1" ] ++ $RESUME_OFFSET_LIST;
+
+  # Модуль доступа к EC (embedded controller) - нужен для управления кулерами
+  boot.kernelModules = [ "ec_sys" ];
 
   # SDDM Display Manager (X11 greeter: wayland-kwin + NVIDIA вешает экран после входа)
   services.xserver.enable = true; # X11 нужен для SDDM greeter (Hyprland останется Wayland-сессией)
@@ -270,7 +274,7 @@ cat <<EOF > "$TARGET_DIR/system/configuration.nix"
   powerManagement.cpuFreqGovernor = "performance";
 
   # Профили питания (через ryzenadj TDP + nvidia-smi power limit):
-  #   eco     - CPU 40W, GPU 30W
+  #   eco     - CPU 40W, GPU 5W (мин. лимит драйвера, работа на iGPU)
   #   balance - CPU 50W, GPU 80W
   #   turbo   - CPU 65W, GPU 115W
   # Переключение из waybar без пароля (NOPASSWD только для этих двух команд)
@@ -296,6 +300,16 @@ cat <<EOF > "$TARGET_DIR/system/configuration.nix"
     };
   };
 
+  # Сервис управления кулерами (nbfc-linux). Конфиг модели пишется
+  # в ~/.config/nbfc.json: {"SelectedConfigId": "MODEL"} после rate-config
+  systemd.services.nbfc_service = {
+    description = "NoteBook FanControl service";
+    wantedBy = [ "multi-user.target" ];
+    path = [ pkgs.kmod ];
+    serviceConfig.Type = "simple";
+    script = "\${pkgs.nbfc-linux}/bin/nbfc_service --config-file '/home/$USERNAME/.config/nbfc.json'";
+  };
+
   # Шрифты (актуализированный пакет эмодзи)
   fonts.packages = with pkgs; [
     nerd-fonts.jetbrains-mono
@@ -319,6 +333,7 @@ cat <<EOF > "$TARGET_DIR/system/configuration.nix"
     pamixer
     wl-clipboard
     ryzenadj
+    nbfc-linux
   ];
 
   users.users.$USERNAME = {
@@ -638,7 +653,7 @@ cat <<EOF > "$TARGET_DIR/home/waybar.nix"
 
       modules-left = [ "hyprland/workspaces" "hyprland/window" "custom/layout" "custom/caps" ];
       modules-center = [ "clock" ];
-      modules-right = [ "pulseaudio" "cpu" "memory" "custom/cpu-temp" "custom/gpu-temp" "network" "battery" "tray" "custom/power-mode" "custom/power" ];
+      modules-right = [ "pulseaudio" "cpu" "memory" "custom/cpu-temp" "custom/gpu-temp" "network" "battery" "custom/fan" "tray" "custom/power-mode" "custom/power" ];
 
       "custom/power" = {
         format = "";
@@ -665,6 +680,14 @@ cat <<EOF > "$TARGET_DIR/home/waybar.nix"
       "custom/power-mode" = {
         exec = "~/.local/bin/power-mode";
         on-click = "printf 'eco\nbalance\nturbo' | fuzzel --dmenu -p 'Mode: ' | xargs -r ~/.local/bin/power-mode-set";
+        interval = 5;
+        tooltip = false;
+      };
+
+      # Кулеры: RPM из nbfc; клик - статус/управление
+      "custom/fan" = {
+        exec = "~/.local/bin/fan";
+        on-click = "kitty -e bash -c 'nbfc status; echo; read -p \"Press enter...\"'";
         interval = 5;
         tooltip = false;
       };
@@ -775,7 +798,7 @@ cat <<EOF > "$TARGET_DIR/home/waybar.nix"
         color: #b4befe;
       }
 
-      #clock, #cpu, #memory, #custom-cpu-temp, #custom-gpu-temp, #network, #pulseaudio, #battery, #tray, #custom-power, #custom-layout, #custom-power-mode, #custom-caps {
+      #clock, #cpu, #memory, #custom-cpu-temp, #custom-gpu-temp, #network, #pulseaudio, #battery, #tray, #custom-power, #custom-layout, #custom-power-mode, #custom-caps, #custom-fan {
         background-color: #1e1e2e;
         padding: 4px 12px;
         border-radius: 10px;
@@ -796,6 +819,7 @@ cat <<EOF > "$TARGET_DIR/home/waybar.nix"
       #custom-layout { color: #b4befe; }
       #custom-power-mode { color: #a6e3a1; }
       #custom-caps { color: #f38ba8; }
+      #custom-fan { color: #89dceb; }
     '';
   };
 
@@ -832,33 +856,33 @@ cat <<EOF > "$TARGET_DIR/home/waybar.nix"
       case \"\$lim\" in
         115) echo \"\" ;;
         80) echo \"\" ;;
-        30) echo \"\" ;;
+        5) echo \"\" ;;
         *) echo \"\" ;;
       esac
     '';
   };
 
-  # Переключение режима питания: eco (40W/30W), balance (50W/80W), turbo (65W/115W)
-  home.file.".local/bin/power-mode-set" = {
-    executable = true;
-    text = ''
-      #!/usr/bin/env bash
-      case \"\$1\" in
-        eco)
-          sudo ryzenadj --stapm-limit=40000 --fast-limit=40000 --slow-limit=35000
-          sudo nvidia-smi -pl 30
-          ;;
-        balance)
-          sudo ryzenadj --stapm-limit=50000 --fast-limit=55000 --slow-limit=45000
-          sudo nvidia-smi -pl 80
-          ;;
-        turbo)
-          sudo ryzenadj --stapm-limit=65000 --fast-limit=70000 --slow-limit=60000
-          sudo nvidia-smi -pl 115
-          ;;
-      esac
-    '';
-  };
+      # Переключение режима питания: eco (40W/5W), balance (50W/80W), turbo (65W/115W)
+      home.file.".local/bin/power-mode-set" = {
+        executable = true;
+        text = ''
+          #!/usr/bin/env bash
+          case \"\$1\" in
+            eco)
+              sudo ryzenadj --stapm-limit=40000 --fast-limit=40000 --slow-limit=35000
+              sudo nvidia-smi -pl 5
+              ;;
+            balance)
+              sudo ryzenadj --stapm-limit=50000 --fast-limit=55000 --slow-limit=45000
+              sudo nvidia-smi -pl 80
+              ;;
+            turbo)
+              sudo ryzenadj --stapm-limit=65000 --fast-limit=70000 --slow-limit=60000
+              sudo nvidia-smi -pl 115
+              ;;
+          esac
+        '';
+      };
 
   # Температура CPU (k10temp на AMD)
   home.file.".local/bin/cpu-temp" = {
@@ -872,15 +896,25 @@ cat <<EOF > "$TARGET_DIR/home/waybar.nix"
     '';
   };
 
-  # Температура GPU (hwmon драйвера nvidia)
+  # Температура GPU (nvidia-smi; если dGPU спит - iGPU amdgpu)
   home.file.".local/bin/gpu-temp" = {
     executable = true;
     text = ''
       #!/usr/bin/env bash
+      t=\$(nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader 2>/dev/null | head -n1)
+      if [ -n \"\$t\" ]; then echo \" \$t°C\"; exit 0; fi
       for h in /sys/class/hwmon/hwmon*; do
         name=\$(cat \"\$h/name\" 2>/dev/null)
-        [ \"\$name\" = \"nvidia\" ] && { t=\$(cat \"\$h/temp1_input\"); echo \" \$((t/1000))°C\"; }
+        [ \"\$name\" = \"amdgpu\" ] && { t=\$(cat \"\$h/temp1_input\"); echo \" \$((t/1000))°C\"; }
       done
+    '';
+  # Статус кулеров (nbfc). Пусто, если сервис не настроен/не запущен
+  home.file.".local/bin/fan" = {
+    executable = true;
+    text = ''
+      #!/usr/bin/env bash
+      out=\$(nbfc status 2>/dev/null) || exit 0
+      echo \"\$out\" | jq -r '.FanSpeeds | map((.Value | tostring) + \"rpm\") | join(\" \")' 2>/dev/null | sed 's/^/ /'
     '';
   };
 }
@@ -1126,3 +1160,14 @@ echo "   Выполни: sudo reboot"
 echo "   - GRUB покажет NixOS и Windows (dual boot)"
 echo "   - Закрытие крышки = гибернация"
 echo "   - Пересборка: sudo nixos-rebuild switch --flake ~/.config/nixos#mechrevo"
+echo ""
+echo "🌬️ Настройка кулеров (nbfc-linux, один раз):"
+echo "   nbfc config -a                                   # список конфигов моделей"
+echo "   nbfc rate-config -a                              # рейтинг подходящих моделей"
+echo "   # выбери модель из rate-config и выполни:"
+echo "   echo '{\"SelectedConfigId\": \"НАЗВАНИЕ_МОДЕЛИ\"}' > ~/.config/nbfc.json"
+echo "   sudo systemctl restart nbfc_service"
+echo "   nbfc status                                      # скорости вентиляторов"
+echo "   nbfc set -s 50 && nbfc set --auto                # тест и авто-режим"
+echo "   sudo nbfc sensors set -f 0 -s @CPU -s @GPU -a Max   # датчики для кулера 1"
+echo "   sudo nbfc sensors set -f 1 -s @CPU -a Max        # датчики для кулера 2"
