@@ -248,9 +248,6 @@ cat <<EOF > "$TARGET_DIR/system/configuration.nix"
   services.xserver.xkb.layout = "us,ru";
   services.xserver.xkb.options = "grp:ctrl_shift_toggle";
 
-  # Режимы питания: экономичный / сбалансированный / производительный
-  services.power-profiles-daemon.enable = true;
-
   programs.hyprland = {
     enable = true;
     xwayland.enable = true;
@@ -612,7 +609,7 @@ cat <<EOF > "$TARGET_DIR/home/waybar.nix"
 
       modules-left = [ "custom/menu" "hyprland/workspaces" "hyprland/window" "custom/layout" "keyboard-state" ];
       modules-center = [ "clock" ];
-      modules-right = [ "pulseaudio" "cpu" "memory" "temperature" "network" "battery" "tray" "custom/power-mode" "custom/power" ];
+      modules-right = [ "pulseaudio" "cpu" "memory" "custom/cpu-temp" "custom/gpu-temp" "network" "battery" "tray" "custom/power-mode" "custom/power" ];
 
       "custom/menu" = {
         format = "";
@@ -680,9 +677,16 @@ cat <<EOF > "$TARGET_DIR/home/waybar.nix"
         interval = 2;
       };
 
-      "temperature" = {
-        critical-threshold = 80;
-        format = " {temperatureC}°C";
+      "custom/cpu-temp" = {
+        exec = "~/.local/bin/cpu-temp";
+        interval = 3;
+        tooltip = false;
+      };
+
+      "custom/gpu-temp" = {
+        exec = "~/.local/bin/gpu-temp";
+        interval = 3;
+        tooltip = false;
       };
 
       "network" = {
@@ -752,7 +756,7 @@ cat <<EOF > "$TARGET_DIR/home/waybar.nix"
         color: #b4befe;
       }
 
-      #clock, #cpu, #memory, #temperature, #network, #pulseaudio, #battery, #tray, #custom-menu, #custom-power, #custom-layout, #custom-power-mode, #keyboard-state {
+      #clock, #cpu, #memory, #custom-cpu-temp, #custom-gpu-temp, #network, #pulseaudio, #battery, #tray, #custom-menu, #custom-power, #custom-layout, #custom-power-mode, #keyboard-state {
         background-color: #1e1e2e;
         padding: 4px 12px;
         border-radius: 10px;
@@ -763,7 +767,8 @@ cat <<EOF > "$TARGET_DIR/home/waybar.nix"
       #clock { color: #89b4fa; }
       #cpu { color: #f38ba8; }
       #memory { color: #fab387; }
-      #temperature { color: #f9e2af; }
+      #custom-cpu-temp { color: #f9e2af; }
+      #custom-gpu-temp { color: #a6e3a1; }
       #network { color: #a6e3a1; }
       #pulseaudio { color: #f5c2e7; }
       #battery { color: #94e2d5; }
@@ -799,6 +804,30 @@ cat <<EOF > "$TARGET_DIR/home/waybar.nix"
         performance) echo \"\" ;;
         *) echo \"\" ;;
       esac
+    '';
+  };
+
+  # Температура CPU (k10temp на AMD)
+  home.file.".local/bin/cpu-temp" = {
+    executable = true;
+    text = ''
+      #!/usr/bin/env bash
+      for h in /sys/class/hwmon/hwmon*; do
+        name=\$(cat \"\$h/name\" 2>/dev/null)
+        [ \"\$name\" = \"k10temp\" ] && { t=\$(cat \"\$h/temp1_input\"); echo \" \$(t/1000))°C\"; }
+      done
+    '';
+  };
+
+  # Температура GPU (hwmon драйвера nvidia)
+  home.file.".local/bin/gpu-temp" = {
+    executable = true;
+    text = ''
+      #!/usr/bin/env bash
+      for h in /sys/class/hwmon/hwmon*; do
+        name=\$(cat \"\$h/name\" 2>/dev/null)
+        [ \"\$name\" = \"nvidia\" ] && { t=\$(cat \"\$h/temp1_input\"); echo \" \$(t/1000))°C\"; }
+      done
     '';
   };
 }
