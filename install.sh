@@ -828,7 +828,7 @@ cat <<EOF > "$TARGET_DIR/home/waybar.nix"
     text = ''
       #!/usr/bin/env bash
       lim=\$(nvidia-smi --query-gpu=power.limit --format=csv,noheader 2>/dev/null | head -n1)
-      lim=\${lim%%.*}
+      lim=''\${lim%%.*}
       case \"\$lim\" in
         115) echo \"\" ;;
         80) echo \"\" ;;
