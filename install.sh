@@ -300,12 +300,12 @@ cat <<EOF > "$TARGET_DIR/system/configuration.nix"
     };
   };
 
-  # Сервис управления кулерами (nbfc-linux). Конфиг модели пишется
-  # в ~/.config/nbfc.json: {"SelectedConfigId": "MODEL"} после rate-config.
-  # Включается вручную после настройки: sudo systemctl enable --now nbfc_service
+  # Сервис управления кулерами (nbfc-linux). Конфиг ~/.config/nbfc.json
+  # создаётся автоматически на шаге 13c (Tongfang X6R: регистр 96, оба кулера).
   systemd.services.nbfc_service = {
     description = "NoteBook FanControl service";
     path = [ pkgs.kmod ];
+    wantedBy = [ "multi-user.target" ];
     serviceConfig.Type = "simple";
     script = "\${pkgs.nbfc-linux}/bin/nbfc_service --config-file '/home/$USERNAME/.config/nbfc.json'";
   };
@@ -1125,6 +1125,59 @@ for f in \
 done
 chown -R "$USERNAME:$USER_GROUP" /home/$USERNAME/.config 2>/dev/null || true
 
+# ==============================================================================
+# 13c. Дефолтный конфиг кулеров nbfc (Tongfang X6R: 2 физ. кулера, 1 регистр duty)
+#      Файл создаётся только если его ещё нет - потом правишь кривую сам:
+#      ~/.config/nbfc.json -> FanConfigurations[0].TemperatureThresholds
+# ==============================================================================
+echo "🌬️ [13c/15] Настройка конфига кулеров (nbfc)..."
+mkdir -p /home/$USERNAME/.config
+if [ ! -f /home/$USERNAME/.config/nbfc.json ]; then
+cat <<'NBFC_EOF' > /home/$USERNAME/.config/nbfc.json
+{
+  "NotebookModel": "Tongfang X6RP57TW (Mechrevo Jiaolong 16 Pro)",
+  "Author": "nbfc-linux community, adjusted curve",
+  "EcPollInterval": 3000,
+  "ReadWriteWords": true,
+  "CriticalTemperature": 95,
+  "FanConfigurations": [
+    {
+      "ReadRegister": 96,
+      "WriteRegister": 96,
+      "MinSpeedValue": 0,
+      "MaxSpeedValue": 100,
+      "IndependentReadMinMaxValues": true,
+      "MinSpeedValueRead": 0,
+      "MaxSpeedValueRead": 100,
+      "ResetRequired": false,
+      "FanSpeedResetValue": 40,
+      "FanDisplayName": "Main Fan (CPU + GPU)",
+      "TemperatureThresholds": [
+        { "UpThreshold": 30, "DownThreshold": 0,   "FanSpeed": 0.0   },
+        { "UpThreshold": 40, "DownThreshold": 35,  "FanSpeed": 22.0  },
+        { "UpThreshold": 50, "DownThreshold": 45,  "FanSpeed": 44.0  },
+        { "UpThreshold": 60, "DownThreshold": 55,  "FanSpeed": 67.0  },
+        { "UpThreshold": 75, "DownThreshold": 70,  "FanSpeed": 100.0 }
+      ],
+      "FanSpeedPercentageOverrides": []
+    }
+  ],
+  "RegisterWriteConfigurations": [
+    {
+      "WriteMode": "Set",
+      "WriteOccasion": "OnInitialization",
+      "Register": 96,
+      "Value": 40,
+      "ResetRequired": false,
+      "Description": "Initial safe fan duty"
+    }
+  ]
+}
+NBFC_EOF
+  echo "   создан ~/.config/nbfc.json (кривая: 30°C -> 0%, 75°C -> 100%)"
+fi
+chown "$USERNAME:$USER_GROUP" /home/$USERNAME/.config/nbfc.json 2>/dev/null || true
+
 cd "$TARGET_DIR"
 
 # ==============================================================================
@@ -1146,6 +1199,21 @@ echo "🚀 Сборка системы NixOS..."
 nixos-rebuild switch --flake "$TARGET_DIR#mechrevo"
 
 # ==============================================================================
+# 14b. Запуск сервиса кулеров (конфиг nbfc.json создан на шаге 13c)
+# ==============================================================================
+echo "🌬️ Запуск сервиса кулеров (nbfc_service)..."
+modprobe ec_sys write_support=1 2>/dev/null || true
+systemctl enable nbfc_service 2>/dev/null || true
+if systemctl start nbfc_service 2>/dev/null; then
+  echo "   сервис запущен"
+else
+  echo "⚠️ nbfc_service не запустился - проверь после перезагрузки: nbfc status"
+fi
+# Датчики: CPU+GPU, алгоритм Max - греется что-то одно, крутятся оба вместе
+nbfc sensors set -f 0 -s @CPU -s @GPU -a Max 2>/dev/null || true
+chown "$USERNAME:$USER_GROUP" /home/$USERNAME/.config/nbfc.json 2>/dev/null || true
+
+# ==============================================================================
 # 15. Пароль пользователя (если его еще нет)
 # ==============================================================================
 echo "🔐 [15/15] Проверка пароля пользователя..."
@@ -1164,13 +1232,9 @@ echo "   - GRUB покажет NixOS и Windows (dual boot)"
 echo "   - Закрытие крышки = гибернация"
 echo "   - Пересборка: sudo nixos-rebuild switch --flake ~/.config/nixos#mechrevo"
 echo ""
-echo "🌬️ Настройка кулеров (nbfc-linux, один раз):"
-echo "   nbfc config -l                                   # список конфигов моделей"
-echo "   sudo nbfc rate-config -a                         # рейтинг подходящих моделей"
-echo "   # выбери модель из rate-config и выполни:"
-echo "   echo '{\"SelectedConfigId\": \"НАЗВАНИЕ_МОДЕЛИ\"}' > ~/.config/nbfc.json"
-echo "   sudo systemctl enable --now nbfc_service"
+echo "🌬️ Кулеры (nbfc-linux, конфиг уже установлен на шаге 13c):"
 echo "   nbfc status                                      # скорости вентиляторов"
-echo "   nbfc set -s 50 && nbfc set --auto                # тест и авто-режим"
-echo "   sudo nbfc sensors set -f 0 -s @CPU -s @GPU -a Max   # датчики для кулера 1"
-echo "   sudo nbfc sensors set -f 1 -s @CPU -a Max        # датчики для кулера 2"
+echo "   nbfc set -s 50 && nbfc set --auto                # тест на 50% и возврат в авто"
+echo "   # кривую правишь в ~/.config/nbfc.json -> FanConfigurations[0].TemperatureThresholds"
+echo "   # (30°C = 0% ... 75°C = 100%, оба кулера вместе, датчики CPU+GPU по Max)"
+echo "   sudo systemctl restart nbfc_service             # применить после правки кривой"
