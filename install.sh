@@ -2,24 +2,40 @@
 
 set -e
 
-REAL_USER=$(logname 2>/dev/null || echo $USER)
+# Автоопределение реального пользователя (даже при запуске через sudo)
+REAL_USER=${SUDO_USER:-$(logname 2>/dev/null || echo $USER)}
+USER_GROUP=$(id -gn "$REAL_USER" 2>/dev/null || echo "users")
 TARGET_DIR="/home/$REAL_USER/.config/nixos"
 
-echo "⚙️ Разворачиваем полный, автономный NixOS/Hyprland сетап из коробки..."
-
-# 1. Подготовка каталогов и прав
-sudo mkdir -p "$TARGET_DIR/system" "$TARGET_DIR/home"
-sudo chown -R $REAL_USER:users "$TARGET_DIR"
-
-# 2. Проверка и копирование hardware-configuration.nix
-if [ -f /etc/nixos/hardware-configuration.nix ]; then
-    cp /etc/nixos/hardware-configuration.nix "$TARGET_DIR/system/hardware-configuration.nix"
-else
-    echo "❌ Ошибка: /etc/nixos/hardware-configuration.nix не найден в /etc/nixos!"
+if [ "$REAL_USER" = "root" ]; then
+    echo "❌ Ошибка: Скрипт не должен запускаться от имени чистого root без SUDO_USER!"
     exit 1
 fi
 
+echo "⚙️ Запуск развертывания NixOS/Hyprland для пользователя: $REAL_USER ($TARGET_DIR)..."
+
+# ==============================================================================
+# 1. Подготовка каталогов и прав
+# ==============================================================================
+echo "📂 [1/13] Создание структуры каталогов..."
+mkdir -p "$TARGET_DIR/system" "$TARGET_DIR/home"
+chown -R "$REAL_USER:$USER_GROUP" "$TARGET_DIR"
+
+# ==============================================================================
+# 2. Проверка и копирование hardware-configuration.nix
+# ==============================================================================
+echo "🖥️ [2/13] Проверка hardware-configuration.nix..."
+if [ -f /etc/nixos/hardware-configuration.nix ]; then
+    cp /etc/nixos/hardware-configuration.nix "$TARGET_DIR/system/hardware-configuration.nix"
+else
+    echo "❌ Ошибка: /etc/nixos/hardware-configuration.nix не найден!"
+    exit 1
+fi
+
+# ==============================================================================
 # 3. Flake.nix
+# ==============================================================================
+echo "❄️ [3/13] Генерация flake.nix..."
 cat <<EOF > "$TARGET_DIR/flake.nix"
 {
   description = "Complete Dotfiles and NixOS Config for Mechrevo";
@@ -52,8 +68,53 @@ cat <<EOF > "$TARGET_DIR/flake.nix"
 }
 EOF
 
+# ==============================================================================
 # 4. Настройка Nvidia RTX 5070M + AMD PRIME
+# ==============================================================================
+echo "🎮 [4/13] Генерация system/nvidia.nix..."
+cat <<EOF > "$TARGET_DIR/system/nvidia.nix"
+{ config, pkgs, ... }:
+
+{
+  hardware.graphics = {
+    enable = true;
+    enable32Bit = true;
+  };
+
+  services.xserver.videoDrivers = [ "nvidia" ];
+
+  hardware.nvidia = {
+    modesetting.enable = true;
+    powerManagement.enable = true;
+    powerManagement.finegrained = true;
+    open = false;
+    nvidiaSettings = true;
+    package = config.boot.kernelPackages.nvidiaPackages.stable;
+
+    prime = {
+      offload = {
+        enable = true;
+        enableOffloadCmd = true;
+      };
+      amdgpuBusId = "PCI:75:0:0";
+      nvidiaBusId = "PCI:1:0:0";
+    };
+  };
+
+  environment.sessionVariables = {
+    LIBVA_DRIVER_NAME = "nvidia";
+    GBM_BACKEND = "nvidia-drm";
+    __GLX_VENDOR_LIBRARY_NAME = "nvidia";
+    NIXOS_OZONE_WL = "1";
+    ELECTRON_OZONE_PLATFORM_HINT = "auto";
+  };
+}
+EOF
+
+# ==============================================================================
 # 5. Системный конфигуратор (SDDM, Pipewire, Zsh, Fonts, Nix Optimizations)
+# ==============================================================================
+echo "⚙️ [5/13] Генерация system/configuration.nix..."
 cat <<EOF > "$TARGET_DIR/system/configuration.nix"
 { pkgs, ... }:
 
@@ -103,13 +164,13 @@ cat <<EOF > "$TARGET_DIR/system/configuration.nix"
 
   services.power-profiles-daemon.enable = true;
 
-  # Шрифты
+  # Шрифты (актуализированный пакет эмодзи)
   fonts.packages = with pkgs; [
     nerd-fonts.jetbrains-mono
     nerd-fonts.fira-code
     font-awesome
     noto-fonts
-    noto-fonts-emoji
+    noto-fonts-color-emoji
   ];
 
   programs.zsh.enable = true;
@@ -137,7 +198,10 @@ cat <<EOF > "$TARGET_DIR/system/configuration.nix"
 }
 EOF
 
+# ==============================================================================
 # 6. Конфигурация Kitty Terminal
+# ==============================================================================
+echo "💻 [6/13] Генерация home/kitty.nix..."
 cat <<EOF > "$TARGET_DIR/home/kitty.nix"
 { pkgs, ... }:
 
@@ -184,7 +248,10 @@ cat <<EOF > "$TARGET_DIR/home/kitty.nix"
 }
 EOF
 
+# ==============================================================================
 # 7. Конфигурация Fuzzel (App Launcher)
+# ==============================================================================
+echo "🔍 [7/13] Генерация home/fuzzel.nix..."
 cat <<EOF > "$TARGET_DIR/home/fuzzel.nix"
 { pkgs, ... }:
 
@@ -221,7 +288,10 @@ cat <<EOF > "$TARGET_DIR/home/fuzzel.nix"
 }
 EOF
 
+# ==============================================================================
 # 8. Конфигурация SwayNC (Центр уведомлений)
+# ==============================================================================
+echo "🔔 [8/13] Генерация home/swaync.nix..."
 cat <<EOF > "$TARGET_DIR/home/swaync.nix"
 { pkgs, ... }:
 
@@ -260,14 +330,16 @@ cat <<EOF > "$TARGET_DIR/home/swaync.nix"
 }
 EOF
 
-# 9. Настройки Hyprland (Полные бинды, правила окон, горячие клавиши)
+# ==============================================================================
+# 9. Настройки Hyprland
+# ==============================================================================
+echo "🖼️ [9/13] Генерация home/hyprland.nix..."
 cat <<EOF > "$TARGET_DIR/home/hyprland.nix"
 { pkgs, ... }:
 
 {
   wayland.windowManager.hyprland = {
     enable = true;
-    configType = "hyprlang";
 
     extraConfig = ''
       monitor = eDP-1, 2560x1600@240, 0x0, 1.25
@@ -395,7 +467,10 @@ cat <<EOF > "$TARGET_DIR/home/hyprland.nix"
 }
 EOF
 
+# ==============================================================================
 # 10. Конфигурация Waybar
+# ==============================================================================
+echo "📊 [10/13] Генерация home/waybar.nix..."
 cat <<EOF > "$TARGET_DIR/home/waybar.nix"
 { pkgs, ... }:
 
@@ -534,7 +609,10 @@ cat <<EOF > "$TARGET_DIR/home/waybar.nix"
 }
 EOF
 
-# 11. Home Manager (Основные приложения пользователя + ИСПРАВЛЕН KDEPACKAGES.DOLPHIN)
+# ==============================================================================
+# 11. Home Manager (Основные приложения пользователя + Актуальный синтаксис)
+# ==============================================================================
+echo "🏠 [11/13] Генерация home/home.nix..."
 cat <<EOF > "$TARGET_DIR/home/home.nix"
 { pkgs, ... }:
 
@@ -566,7 +644,7 @@ cat <<EOF > "$TARGET_DIR/home/home.nix"
     vscode
     firefox
     clash-verge-rev
-    kdePackages.dolphin # Исправленный путь к Dolphin в nixpkgs-unstable
+    kdePackages.dolphin
     
     # Железо и доп утилиты
     ryzenadj
@@ -574,9 +652,10 @@ cat <<EOF > "$TARGET_DIR/home/home.nix"
     papirus-icon-theme
   ];
 
-  # Темы GTK и курсора
+  # Темы GTK (Заглушен варнинг gtk4)
   gtk = {
     enable = true;
+    gtk4.theme = null;
     theme = {
       name = "Adwaita-dark";
       package = pkgs.gnome-themes-extra;
@@ -598,10 +677,15 @@ cat <<EOF > "$TARGET_DIR/home/home.nix"
     };
   };
 
+  # Обновленный синтаксис настроек Git (без варнингов)
   programs.git = {
     enable = true;
-    userName = "$REAL_USER";
-    userEmail = "$REAL_USER@local";
+    settings = {
+      user = {
+        name = "$REAL_USER";
+        email = "$REAL_USER@local";
+      };
+    };
   };
 
   programs.home-manager.enable = true;
@@ -609,16 +693,30 @@ cat <<EOF > "$TARGET_DIR/home/home.nix"
 }
 EOF
 
-# 12. Передача прав
-sudo chown -R $REAL_USER:users "$TARGET_DIR"
+# ==============================================================================
+# 12. Передача прав пользователю
+# ==============================================================================
+echo "🔑 [12/13] Настройка прав доступа для $REAL_USER..."
+chown -R "$REAL_USER:$USER_GROUP" "$TARGET_DIR"
 
 cd "$TARGET_DIR"
 
-# 13. Инициализация локального Git-репозитория и сборка
-echo "📦 Индексация всех конфигов в Git..."
-nix-shell -p git --run "git init && git config user.name '$REAL_USER' && git config user.email '$REAL_USER@local' && git add -A"
+# ==============================================================================
+# 13. Инициализация локального Git-репозитория и запуск сборки
+# ==============================================================================
+echo "📦 [13/13] Подготовка Git-репозитория и запуск nixos-rebuild..."
 
-echo "🚀 Запуск локальной сборки NixOS из коробки..."
-sudo nix-shell -p git --run "NIX_CONFIG='experimental-features = nix-command flakes' nixos-rebuild switch --flake .#mechrevo"
+# Разрешаем root переходить в папку пользователя без ошибки dubious ownership
+git config --global --add safe.directory "$TARGET_DIR" 2>/dev/null || true
 
-echo "✅ Все собранное окружение готово без ошибок! Выполни: sudo reboot"
+# Создаем Git-репозиторий от имени обычного пользователя
+su - "$REAL_USER" -c "cd '$TARGET_DIR' && git init 2>/dev/null || true"
+su - "$REAL_USER" -c "cd '$TARGET_DIR' && git config user.name '$REAL_USER'"
+su - "$REAL_USER" -c "cd '$TARGET_DIR' && git config user.email '$REAL_USER@local'"
+su - "$REAL_USER" -c "cd '$TARGET_DIR' && git add -A"
+su - "$REAL_USER" -c "cd '$TARGET_DIR' && git commit -m 'Automated nixos build setup' 2>/dev/null || true"
+
+echo "🚀 Сборка системы NixOS..."
+nixos-rebuild switch --flake "$TARGET_DIR#mechrevo"
+
+echo "✅ Система успешно собрана! Выполни: sudo reboot"
