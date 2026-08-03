@@ -146,7 +146,7 @@ done < <(lsblk -n -l -o NAME,TYPE,FSTYPE,UUID 2>/dev/null || true)
 if [ -n "$SWAP_UUID" ]; then
     # Гибернация через swap-раздел: resume_offset не нужен, работает на любой ФС
     RESUME_DEV="/dev/disk/by-uuid/${SWAP_UUID}"
-    RESUME_OFFSET_LINE=""
+    RESUME_OFFSET_LIST="[ ]"
     echo "✅ Найден swap-раздел /dev/${SWAP_NAME} (UUID=${SWAP_UUID}) - используем его"
     if grep -qi "swap" "$TARGET_DIR/system/hardware-configuration.nix"; then
         SWAP_DEVICES_LINE="" # раздел уже описан в hardware-configuration.nix
@@ -179,7 +179,7 @@ else
     fi
     RESUME_OFFSET=$((OFFSET_BLOCK * 4096))
     RESUME_DEV="/dev/disk/by-uuid/$(findmnt -no UUID /)"
-    RESUME_OFFSET_LINE="boot.kernelParams = [ \"resume_offset=${RESUME_OFFSET}\" ];"
+    RESUME_OFFSET_LIST="[ \"resume_offset=${RESUME_OFFSET}\" ]"
     SWAP_DEVICES_LINE="swapDevices = [ { device = \"/var/lib/swapfile\"; } ];"
     echo "✅ resume_offset=${RESUME_OFFSET}"
 fi
@@ -209,7 +209,6 @@ cat <<EOF > "$TARGET_DIR/system/configuration.nix"
 
   # Гибернация: закрыл крышку -> RAM ушла в swap -> открыл -> все работает
   boot.resumeDevice = "$RESUME_DEV";
-  $RESUME_OFFSET_LINE
   $SWAP_DEVICES_LINE
 
   # Гибернация по закрытию крышки (и от батареи, и от сети)
@@ -235,7 +234,8 @@ cat <<EOF > "$TARGET_DIR/system/configuration.nix"
   i18n.defaultLocale = "ru_RU.UTF-8";
 
   # NVIDIA: фикс чёрного экрана на новых драйверах (Blackwell)
-  boot.kernelParams = [ "nvidia_drm.fbdev=1" ];
+  # + resume_offset для гибернации (если используется swapfile)
+  boot.kernelParams = [ "nvidia_drm.fbdev=1" ] ++ $RESUME_OFFSET_LIST;
 
   # SDDM Display Manager (X11 greeter: wayland-kwin + NVIDIA вешает экран после входа)
   services.xserver.enable = true; # X11 нужен для SDDM greeter (Hyprland останется Wayland-сессией)
@@ -290,7 +290,7 @@ cat <<EOF > "$TARGET_DIR/system/configuration.nix"
     serviceConfig = {
       Type = "oneshot";
       ExecStart = [
-        "${pkgs.ryzenadj}/bin/ryzenadj --stapm-limit=65000 --fast-limit=70000 --slow-limit=60000"
+        "/run/current-system/sw/bin/ryzenadj --stapm-limit=65000 --fast-limit=70000 --slow-limit=60000"
         "/run/current-system/sw/bin/nvidia-smi -pl 115"
       ];
     };
