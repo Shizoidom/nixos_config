@@ -334,6 +334,7 @@ cat <<EOF > "$TARGET_DIR/system/configuration.nix"
     wl-clipboard
     ryzenadj
     nbfc-linux
+    acpica-tools
   ];
 
   users.users.$USERNAME = {
@@ -1164,8 +1165,8 @@ echo "   - Закрытие крышки = гибернация"
 echo "   - Пересборка: sudo nixos-rebuild switch --flake ~/.config/nixos#mechrevo"
 echo ""
 echo "🌬️ Настройка кулеров (nbfc-linux, один раз):"
-echo "   nbfc config -a                                   # список конфигов моделей"
-echo "   nbfc rate-config -a                              # рейтинг подходящих моделей"
+echo "   nbfc config -l                                   # список конфигов моделей"
+echo "   sudo nbfc rate-config -a                         # рейтинг подходящих моделей"
 echo "   # выбери модель из rate-config и выполни:"
 echo "   echo '{\"SelectedConfigId\": \"НАЗВАНИЕ_МОДЕЛИ\"}' > ~/.config/nbfc.json"
 echo "   sudo systemctl enable --now nbfc_service"
