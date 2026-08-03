@@ -301,10 +301,10 @@ cat <<EOF > "$TARGET_DIR/system/configuration.nix"
   };
 
   # Сервис управления кулерами (nbfc-linux). Конфиг модели пишется
-  # в ~/.config/nbfc.json: {"SelectedConfigId": "MODEL"} после rate-config
+  # в ~/.config/nbfc.json: {"SelectedConfigId": "MODEL"} после rate-config.
+  # Включается вручную после настройки: sudo systemctl enable --now nbfc_service
   systemd.services.nbfc_service = {
     description = "NoteBook FanControl service";
-    wantedBy = [ "multi-user.target" ];
     path = [ pkgs.kmod ];
     serviceConfig.Type = "simple";
     script = "\${pkgs.nbfc-linux}/bin/nbfc_service --config-file '/home/$USERNAME/.config/nbfc.json'";
@@ -1168,7 +1168,7 @@ echo "   nbfc config -a                                   # список кон�
 echo "   nbfc rate-config -a                              # рейтинг подходящих моделей"
 echo "   # выбери модель из rate-config и выполни:"
 echo "   echo '{\"SelectedConfigId\": \"НАЗВАНИЕ_МОДЕЛИ\"}' > ~/.config/nbfc.json"
-echo "   sudo systemctl restart nbfc_service"
+echo "   sudo systemctl enable --now nbfc_service"
 echo "   nbfc status                                      # скорости вентиляторов"
 echo "   nbfc set -s 50 && nbfc set --auto                # тест и авто-режим"
 echo "   sudo nbfc sensors set -f 0 -s @CPU -s @GPU -a Max   # датчики для кулера 1"
