@@ -1,3 +1,5 @@
+curl -sSL https://raw.githubusercontent.com/<твой_username>/<твой_repo>/main/install.sh | bash
+
 git clone https://github.com/Shizoidom/nixos_config.git ~/nixos-config && cd ~/nixos-config && chmod +x install.sh && ./install.sh
 
 Сочетание клавиш,Действие
