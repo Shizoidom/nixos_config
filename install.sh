@@ -598,9 +598,21 @@ cat <<EOF > "$TARGET_DIR/home/waybar.nix"
       margin-left = 10;
       margin-right = 10;
 
-      modules-left = [ "hyprland/workspaces" "hyprland/window" ];
+      modules-left = [ "custom/menu" "hyprland/workspaces" "hyprland/window" ];
       modules-center = [ "clock" ];
-      modules-right = [ "pulseaudio" "cpu" "memory" "temperature" "network" "battery" "tray" ];
+      modules-right = [ "pulseaudio" "cpu" "memory" "temperature" "network" "battery" "tray" "custom/power" ];
+
+      "custom/menu" = {
+        format = "";
+        on-click = "fuzzel";
+        tooltip = false;
+      };
+
+      "custom/power" = {
+        format = "";
+        on-click = "wlogout -b 5";
+        tooltip = false;
+      };
 
       "hyprland/workspaces" = {
         disable-scroll = true;
@@ -769,6 +781,10 @@ cat <<EOF > "$TARGET_DIR/home/home.nix"
     networkmanagerapplet
     blueman
     nerd-fonts.jetbrains-mono
+
+    # Настройки и меню питания
+    pavucontrol
+    wlogout
   ];
 
   # Темы GTK (Заглушен варнинг gtk4)
