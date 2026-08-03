@@ -234,10 +234,12 @@ cat <<EOF > "$TARGET_DIR/system/configuration.nix"
   time.timeZone = "Europe/Moscow";
   i18n.defaultLocale = "ru_RU.UTF-8";
 
-  # SDDM Display Manager
+  # NVIDIA: фикс чёрного экрана на новых драйверах (Blackwell)
+  boot.kernelParams = [ "nvidia_drm.fbdev=1" ];
+
+  # SDDM Display Manager (X11 greeter: wayland-kwin + NVIDIA вешает экран после входа)
   services.displayManager.sddm = {
     enable = true;
-    wayland.enable = true;
   };
   services.displayManager.defaultSession = "hyprland";
 
