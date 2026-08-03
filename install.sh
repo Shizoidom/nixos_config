@@ -654,7 +654,7 @@ cat <<EOF > "$TARGET_DIR/home/waybar.nix"
 
       modules-left = [ "hyprland/workspaces" "hyprland/window" "custom/layout" "custom/caps" ];
       modules-center = [ "clock" ];
-      modules-right = [ "pulseaudio" "cpu" "memory" "custom/cpu-temp" "custom/gpu-temp" "network" "battery" "custom/fan" "tray" "custom/power-mode" "custom/power" ];
+      modules-right = [ "pulseaudio" "cpu" "memory" "custom/temps" "network" "battery" "custom/fan" "tray" "custom/power-mode" "custom/power" ];
 
       "custom/power" = {
         format = "";
@@ -670,7 +670,7 @@ cat <<EOF > "$TARGET_DIR/home/waybar.nix"
         tooltip = false;
       };
 
-      # Индикатор Caps Lock
+      # Индикатор Caps Lock (замочек: закрыт - вкл, открыт - выкл)
       "custom/caps" = {
         exec = "~/.local/bin/caps";
         interval = 2;
@@ -680,7 +680,7 @@ cat <<EOF > "$TARGET_DIR/home/waybar.nix"
       # Режим питания (клик - меню eco/balance/turbo в fuzzel)
       "custom/power-mode" = {
         exec = "~/.local/bin/power-mode";
-        on-click = "printf 'eco\nbalance\nturbo' | fuzzel --dmenu -p 'Mode: ' | xargs -r ~/.local/bin/power-mode-set";
+        on-click = "~/.local/bin/power-mode-menu";
         interval = 5;
         tooltip = false;
       };
@@ -720,15 +720,9 @@ cat <<EOF > "$TARGET_DIR/home/waybar.nix"
         interval = 2;
       };
 
-      "custom/cpu-temp" = {
-        exec = "~/.local/bin/cpu-temp";
-        interval = 3;
-        tooltip = false;
-      };
-
-      "custom/gpu-temp" = {
-        exec = "~/.local/bin/gpu-temp";
-        interval = 3;
+      "custom/temps" = {
+        exec = "~/.local/bin/temps";
+        interval = 2;
         tooltip = false;
       };
 
@@ -799,7 +793,7 @@ cat <<EOF > "$TARGET_DIR/home/waybar.nix"
         color: #b4befe;
       }
 
-      #clock, #cpu, #memory, #custom-cpu-temp, #custom-gpu-temp, #network, #pulseaudio, #battery, #tray, #custom-power, #custom-layout, #custom-power-mode, #custom-caps, #custom-fan {
+      #clock, #cpu, #memory, #custom-temps, #network, #pulseaudio, #battery, #tray, #custom-power, #custom-layout, #custom-power-mode, #custom-caps, #custom-fan {
         background-color: #1e1e2e;
         padding: 4px 12px;
         border-radius: 10px;
@@ -810,8 +804,7 @@ cat <<EOF > "$TARGET_DIR/home/waybar.nix"
       #clock { color: #89b4fa; }
       #cpu { color: #f38ba8; }
       #memory { color: #fab387; }
-      #custom-cpu-temp { color: #f9e2af; }
-      #custom-gpu-temp { color: #a6e3a1; }
+      #custom-temps { color: #f9e2af; }
       #network { color: #a6e3a1; }
       #pulseaudio { color: #f5c2e7; }
       #battery { color: #94e2d5; }
@@ -837,77 +830,104 @@ cat <<EOF > "$TARGET_DIR/home/waybar.nix"
     '';
   };
 
-  # Индикатор Caps Lock
+  # Индикатор Caps Lock (закрытый/открытый замочек, иконки Nerd Font)
   home.file.".local/bin/caps" = {
     executable = true;
     text = ''
       #!/usr/bin/env bash
-      state=\$(hyprctl devices -j | jq -r '.keyboards[] | select(.main == true) | .capsLockState' 2>/dev/null | head -n1)
-      [ \"\$state\" = \"true\" ] && echo \"\" || echo \"\"
+      state=\$(hyprctl devices -j 2>/dev/null | jq -r '.keyboards[] | select(.main == true) | (.capslockState // .capsLockState // false)' 2>/dev/null | head -n1)
+      if [ \"\$state\" = \"true\" ]; then
+        echo " "
+      else
+        echo " "
+      fi
     '';
   };
 
-  # Текущий режим питания (определяем по фактическому лимиту GPU)
+  # Текущий режим питания: файл /tmp/power-mode (пишет power-mode-set),
+  # fallback - фактический лимит GPU (nvidia-smi с timeout)
   home.file.".local/bin/power-mode" = {
     executable = true;
     text = ''
       #!/usr/bin/env bash
-      lim=\$(nvidia-smi --query-gpu=power.limit --format=csv,noheader 2>/dev/null | head -n1)
-      lim=''\${lim%%.*}
-      case \"\$lim\" in
-        115) echo \"\" ;;
-        80) echo \"\" ;;
-        5) echo \"\" ;;
-        *) echo \"\" ;;
+      mode=\$(cat /tmp/power-mode 2>/dev/null | head -n1)
+      if [ -z \"\$mode\" ]; then
+        lim=\$(timeout 2 nvidia-smi --query-gpu=power.limit --format=csv,noheader 2>/dev/null | head -n1)
+        lim=''\${lim%%.*}
+        case \"\$lim\" in
+          115) mode=\"turbo\" ;;
+          80) mode=\"balance\" ;;
+          5) mode=\"eco\" ;;
+        esac
+      fi
+      case \"\$mode\" in
+        eco)     echo " eco" ;;
+        balance) echo " balance" ;;
+        turbo)   echo " turbo" ;;
+        *)       echo " turbo" ;;
       esac
     '';
   };
 
-      # Переключение режима питания: eco (40W/5W), balance (50W/80W), turbo (65W/115W)
-      home.file.".local/bin/power-mode-set" = {
-        executable = true;
-        text = ''
-          #!/usr/bin/env bash
-          case \"\$1\" in
-            eco)
-              sudo ryzenadj --stapm-limit=40000 --fast-limit=40000 --slow-limit=35000
-              sudo nvidia-smi -pl 5
-              ;;
-            balance)
-              sudo ryzenadj --stapm-limit=50000 --fast-limit=55000 --slow-limit=45000
-              sudo nvidia-smi -pl 80
-              ;;
-            turbo)
-              sudo ryzenadj --stapm-limit=65000 --fast-limit=70000 --slow-limit=60000
-              sudo nvidia-smi -pl 115
-              ;;
-          esac
-        '';
-      };
-
-  # Температура CPU (k10temp на AMD)
-  home.file.".local/bin/cpu-temp" = {
+  # Переключение режима питания: eco (40W/5W), balance (50W/80W), turbo (65W/115W).
+  # Сохраняет выбор в /tmp/power-mode, чтобы waybar не зависел от nvidia-smi.
+  home.file.".local/bin/power-mode-set" = {
     executable = true;
     text = ''
       #!/usr/bin/env bash
-      for h in /sys/class/hwmon/hwmon*; do
-        name=\$(cat \"\$h/name\" 2>/dev/null)
-        [ \"\$name\" = \"k10temp\" ] && { t=\$(cat \"\$h/temp1_input\"); echo \" \$((t/1000))°C\"; }
-      done
+      case \"\$1\" in
+        eco)
+          sudo ryzenadj --stapm-limit=40000 --fast-limit=40000 --slow-limit=35000
+          sudo timeout 10 nvidia-smi -pl 5
+          ;;
+        balance)
+          sudo ryzenadj --stapm-limit=50000 --fast-limit=55000 --slow-limit=45000
+          sudo timeout 10 nvidia-smi -pl 80
+          ;;
+        turbo)
+          sudo ryzenadj --stapm-limit=65000 --fast-limit=70000 --slow-limit=60000
+          sudo timeout 10 nvidia-smi -pl 115
+          ;;
+        *) exit 1 ;;
+      esac
+      echo \"\$1\" > /tmp/power-mode
+      chmod 666 /tmp/power-mode 2>/dev/null || true
     '';
   };
 
-  # Температура GPU (nvidia-smi; если dGPU спит - iGPU amdgpu)
-  home.file.".local/bin/gpu-temp" = {
+  # Меню выбора режима питания (fuzzel)
+  home.file.".local/bin/power-mode-menu" = {
     executable = true;
     text = ''
       #!/usr/bin/env bash
-      t=\$(nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader 2>/dev/null | head -n1)
-      if [ -n \"\$t\" ]; then echo \" \$t°C\"; exit 0; fi
+      choice=\$(printf 'eco\nbalance\nturbo' | fuzzel --dmenu -p 'Mode: ' | head -n1)
+      [ -n \"\$choice\" ] && ~/.local/bin/power-mode-set \"\$choice\"
+    '';
+  };
+
+  # Температуры CPU (k10temp) + GPU (nvidia-smi с timeout, fallback amdgpu)
+  home.file.".local/bin/temps" = {
+    executable = true;
+    text = ''
+      #!/usr/bin/env bash
+      cpu=\"?\"
       for h in /sys/class/hwmon/hwmon*; do
         name=\$(cat \"\$h/name\" 2>/dev/null)
-        [ \"\$name\" = \"amdgpu\" ] && { t=\$(cat \"\$h/temp1_input\"); echo \" \$((t/1000))°C\"; }
+        [ \"\$name\" = \"k10temp\" ] && cpu=\$(cat \"\$h/temp1_input\" 2>/dev/null)
       done
+      gpu=\"?\"
+      t=\$(timeout 2 nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader 2>/dev/null | head -n1)
+      if [ -n \"\$t\" ]; then
+        gpu=\"\$t\"
+      else
+        for h in /sys/class/hwmon/hwmon*; do
+          name=\$(cat \"\$h/name\" 2>/dev/null)
+          [ \"\$name\" = \"amdgpu\" ] && gpu=\$(cat \"\$h/temp1_input\" 2>/dev/null)
+        done
+      fi
+      [ -n \"\$cpu\" ] && [ \"\$cpu\" -gt 1000 ] 2>/dev/null && cpu=\$((cpu/1000))
+      [ -n \"\$gpu\" ] && [ \"\$gpu\" -gt 1000 ] 2>/dev/null && gpu=\$((gpu/1000))
+      echo \"CPU: \$cpu GPU: \$gpu\"
     '';
   };
 
