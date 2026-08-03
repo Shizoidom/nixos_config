@@ -239,6 +239,7 @@ cat <<EOF > "$TARGET_DIR/system/configuration.nix"
     enable = true;
     wayland.enable = true;
   };
+  services.displayManager.defaultSession = "hyprland";
 
   programs.hyprland = {
     enable = true;
@@ -455,6 +456,13 @@ cat <<EOF > "$TARGET_DIR/home/hyprland.nix"
 
       env = XCURSOR_SIZE,24
       env = HYPRCURSOR_SIZE,24
+
+      # NVIDIA: обязательные env для Wayland-рендера
+      env = LIBVA_DRIVER_NAME,nvidia
+      env = GBM_BACKEND,nvidia-drm
+      env = __GLX_VENDOR_LIBRARY_NAME,nvidia
+      env = WLR_NO_HARDWARE_CURSORS,1
+      env = QT_QPA_PLATFORM,wayland
 
       misc {
           disable_hyprland_logo = true
