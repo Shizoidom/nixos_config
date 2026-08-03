@@ -455,6 +455,9 @@ cat <<EOF > "$TARGET_DIR/home/hyprland.nix"
 
       exec-once = waybar
       exec-once = swaync
+      exec-once = hyprpaper
+      exec-once = nm-applet
+      exec-once = blueman-applet
       exec-once = clash-verge-rev
 
       env = XCURSOR_SIZE,24
@@ -467,11 +470,14 @@ cat <<EOF > "$TARGET_DIR/home/hyprland.nix"
       env = WLR_NO_HARDWARE_CURSORS,1
       env = QT_QPA_PLATFORM,wayland
 
+      render {
+          vfr = true
+      }
+
       misc {
           disable_hyprland_logo = true
           force_default_wallpaper = 0
           background_color = 0x11111b
-          vfr = true
       }
 
       general {
@@ -512,15 +518,15 @@ cat <<EOF > "$TARGET_DIR/home/hyprland.nix"
       }
 
       dwindle {
-          pseudotile = true
+          pseudo_tile = true
           preserve_split = true
       }
 
       # Правила для плавающих окон
-      windowrulev2 = float, class:^(pavucontrol)$
-      windowrulev2 = float, class:^(blueman-manager)$
-      windowrulev2 = float, class:^(clash-verge)$
-      windowrulev2 = float, class:^(org.kde.dolphin)$,title:^(Progress Dialog.*)$
+      windowrule = float, class:^(pavucontrol)$
+      windowrule = float, class:^(blueman-manager)$
+      windowrule = float, class:^(clash-verge)$
+      windowrule = float, class:^(org.kde.dolphin)$,title:^(Progress Dialog.*)$
 
       \$mainMod = SUPER
 
@@ -569,6 +575,14 @@ cat <<EOF > "$TARGET_DIR/home/hyprland.nix"
       # Изменение размеров и перемещение мышью
       bindm = \$mainMod, mouse:272, movewindow
       bindm = \$mainMod, mouse:273, resizewindow
+    '';
+  };
+
+  # Конфиг hyprpaper (обои) - сам файл обоев генерируется на шаге 12b
+  home.file.".config/hypr/hyprpaper.conf" = {
+    text = ''
+      preload = /home/$USERNAME/Pictures/wallpaper.png
+      wallpaper = , /home/$USERNAME/Pictures/wallpaper.png
     '';
   };
 }
@@ -757,6 +771,12 @@ cat <<EOF > "$TARGET_DIR/home/home.nix"
     ryzenadj
     appimage-run
     papirus-icon-theme
+
+    # Обои, системный трей (wifi/bluetooth) и шрифт с иконками
+    hyprpaper
+    networkmanagerapplet
+    blueman
+    nerd-fonts.jetbrains-mono
   ];
 
   # Темы GTK (Заглушен варнинг gtk4)
@@ -799,6 +819,24 @@ cat <<EOF > "$TARGET_DIR/home/home.nix"
   home.stateVersion = "24.11";
 }
 EOF
+
+# ==============================================================================
+# 12b. Генерация обоев Catppuccin (если файла еще нет)
+# ==============================================================================
+echo "🎨 [12b/15] Генерация обоев Catppuccin..."
+mkdir -p /home/$USERNAME/Pictures
+if [ ! -f /home/$USERNAME/Pictures/wallpaper.png ]; then
+  nix-shell -p imagemagick --run "
+    convert -size 3840x2160 xc:'#11111b' \
+      -fill '#1e1e2e' -draw 'circle 3500,200 3500,2600' -blur 0x140 \
+      -fill '#313244' -draw 'circle 400,1900 400,3600' -blur 0x180 \
+      -fill '#1e1e2e' -draw 'circle 1900,1100 1900,3000' -blur 0x220 \
+      -fill '#45475a' -draw 'circle 2900,1800 2900,2400' -blur 0x120 \
+      -fill '#11111b' -draw 'circle 1500,300 1500,1600' -blur 0x100 \
+      -blur 0x30 /home/$USERNAME/Pictures/wallpaper.png
+  "
+fi
+chown "$USERNAME:$USER_GROUP" /home/$USERNAME/Pictures/wallpaper.png 2>/dev/null || true
 
 # ==============================================================================
 # 13. Передача прав пользователю
