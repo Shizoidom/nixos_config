@@ -268,7 +268,6 @@ cat <<EOF > "$TARGET_DIR/system/configuration.nix"
 
   # Всегда производительный режим: CPU governor + турбо-профиль при загрузке
   powerManagement.cpuFreqGovernor = "performance";
-  environment.systemPackages = with pkgs; [ ryzenadj ];
 
   # Профили питания (через ryzenadj TDP + nvidia-smi power limit):
   #   eco     - CPU 40W, GPU 30W
@@ -319,6 +318,7 @@ cat <<EOF > "$TARGET_DIR/system/configuration.nix"
     playerctl
     pamixer
     wl-clipboard
+    ryzenadj
   ];
 
   users.users.$USERNAME = {
@@ -867,7 +867,7 @@ cat <<EOF > "$TARGET_DIR/home/waybar.nix"
       #!/usr/bin/env bash
       for h in /sys/class/hwmon/hwmon*; do
         name=\$(cat \"\$h/name\" 2>/dev/null)
-        [ \"\$name\" = \"k10temp\" ] && { t=\$(cat \"\$h/temp1_input\"); echo \" \$(t/1000))°C\"; }
+        [ \"\$name\" = \"k10temp\" ] && { t=\$(cat \"\$h/temp1_input\"); echo \" \$((t/1000))°C\"; }
       done
     '';
   };
@@ -879,7 +879,7 @@ cat <<EOF > "$TARGET_DIR/home/waybar.nix"
       #!/usr/bin/env bash
       for h in /sys/class/hwmon/hwmon*; do
         name=\$(cat \"\$h/name\" 2>/dev/null)
-        [ \"\$name\" = \"nvidia\" ] && { t=\$(cat \"\$h/temp1_input\"); echo \" \$(t/1000))°C\"; }
+        [ \"\$name\" = \"nvidia\" ] && { t=\$(cat \"\$h/temp1_input\"); echo \" \$((t/1000))°C\"; }
       done
     '';
   };
