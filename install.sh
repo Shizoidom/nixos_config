@@ -1126,16 +1126,18 @@ done
 chown -R "$USERNAME:$USER_GROUP" /home/$USERNAME/.config 2>/dev/null || true
 
 # ==============================================================================
-# 13c. Дефолтный конфиг кулеров nbfc (Tongfang X6R: 2 физ. кулера, 1 регистр duty)
-#      Файл создаётся только если его ещё нет - потом правишь кривую сам:
-#      ~/.config/nbfc.json -> FanConfigurations[0].TemperatureThresholds
+# 13c. Конфиг кулеров nbfc (Tongfang X6R: 2 физ. кулера, 1 регистр duty).
+#      Формат nbfc-linux 0.5.2: полный конфиг модели кладётся в writable
+#      /var/lib/nbfc/configs/, а ~/.config/nbfc.json содержит только
+#      {"SelectedConfigId": "ИМЯ_ФАЙЛА"} - сам сервис найдет модель там.
+#      Кривую правишь сам: /var/lib/nbfc/configs/mechrevo-x6r.json
 # ==============================================================================
 echo "🌬️ [13c/15] Настройка конфига кулеров (nbfc)..."
-mkdir -p /home/$USERNAME/.config
+mkdir -p /var/lib/nbfc/configs /home/$USERNAME/.config
 if [ ! -f /home/$USERNAME/.config/nbfc.json ]; then
-cat <<'NBFC_EOF' > /home/$USERNAME/.config/nbfc.json
+cat <<'NBFC_EOF' > /var/lib/nbfc/configs/mechrevo-x6r.json
 {
-  "NotebookModel": "Tongfang X6RP57TW (Mechrevo Jiaolong 16 Pro)",
+  "NotebookModel": "Mechrevo Jiaolong 16 Pro (Tongfang X6R)",
   "Author": "nbfc-linux community, adjusted curve",
   "EcPollInterval": 3000,
   "ReadWriteWords": true,
@@ -1152,6 +1154,8 @@ cat <<'NBFC_EOF' > /home/$USERNAME/.config/nbfc.json
       "ResetRequired": false,
       "FanSpeedResetValue": 40,
       "FanDisplayName": "Main Fan (CPU + GPU)",
+      "TemperatureAlgorithmType": "Max",
+      "Sensors": ["@CPU", "@GPU"],
       "TemperatureThresholds": [
         { "UpThreshold": 30, "DownThreshold": 0,   "FanSpeed": 0.0   },
         { "UpThreshold": 40, "DownThreshold": 35,  "FanSpeed": 22.0  },
@@ -1174,7 +1178,8 @@ cat <<'NBFC_EOF' > /home/$USERNAME/.config/nbfc.json
   ]
 }
 NBFC_EOF
-  echo "   создан ~/.config/nbfc.json (кривая: 30°C -> 0%, 75°C -> 100%)"
+echo '{"SelectedConfigId": "mechrevo-x6r"}' > /home/$USERNAME/.config/nbfc.json
+  echo "   создан конфиг модели + nbfc.json (кривая: 30°C -> 0%, 75°C -> 100%)"
 fi
 chown "$USERNAME:$USER_GROUP" /home/$USERNAME/.config/nbfc.json 2>/dev/null || true
 
@@ -1209,8 +1214,6 @@ if systemctl start nbfc_service 2>/dev/null; then
 else
   echo "⚠️ nbfc_service не запустился - проверь после перезагрузки: nbfc status"
 fi
-# Датчики: CPU+GPU, алгоритм Max - греется что-то одно, крутятся оба вместе
-nbfc sensors set -f 0 -s @CPU -s @GPU -a Max 2>/dev/null || true
 chown "$USERNAME:$USER_GROUP" /home/$USERNAME/.config/nbfc.json 2>/dev/null || true
 
 # ==============================================================================
@@ -1235,6 +1238,6 @@ echo ""
 echo "🌬️ Кулеры (nbfc-linux, конфиг уже установлен на шаге 13c):"
 echo "   nbfc status                                      # скорости вентиляторов"
 echo "   nbfc set -s 50 && nbfc set --auto                # тест на 50% и возврат в авто"
-echo "   # кривую правишь в ~/.config/nbfc.json -> FanConfigurations[0].TemperatureThresholds"
+echo "   # кривую правишь в /var/lib/nbfc/configs/mechrevo-x6r.json -> TemperatureThresholds"
 echo "   # (30°C = 0% ... 75°C = 100%, оба кулера вместе, датчики CPU+GPU по Max)"
 echo "   sudo systemctl restart nbfc_service             # применить после правки кривой"
